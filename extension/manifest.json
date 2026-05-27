@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "OmniChannel OTA Bridge",
+  "version": "1.0.0",
+  "description": "Polls OmniChannel for pending jobs and executes platform API calls using your live browser session.",
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": [
+    "https://supply.klook.com/*",
+    "https://api.12go.asia/*",
+    "https://supply.trip.com/*",
+    "https://hkbuslineandopentour.seatos.com/*",
+    "https://*.up.railway.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OmniChannel Bridge"
+  }
+}

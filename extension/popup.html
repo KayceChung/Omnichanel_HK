@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OmniChannel Bridge</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; width: 320px; padding: 16px; background: #fff; }
+    h2  { font-size: 15px; margin-bottom: 2px; }
+    .sub { font-size: 12px; color: #6b7280; margin-bottom: 14px; }
+    .card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+    .card .label { font-size: 11px; color: #9ca3af; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+    .card .value { font-size: 13px; color: #374151; }
+    .section-title { font-size: 12px; font-weight: 600; color: #6b7280; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+    textarea { width: 100%; height: 64px; font-size: 11px; font-family: monospace; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; resize: vertical; color: #374151; }
+    .row { display: flex; gap: 6px; margin-top: 6px; }
+    .btn { flex: 1; padding: 8px; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:active { background: #1d4ed8; }
+    .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+    .btn-secondary:active { background: #e5e7eb; }
+    .toast { font-size: 12px; color: #16a34a; margin-top: 6px; min-height: 16px; }
+    .toast.error { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <h2>OmniChannel Bridge</h2>
+  <p class="sub">Relays inventory jobs to OTA platforms.</p>
+
+  <div class="card">
+    <div class="label">Last Poll</div>
+    <div class="value" id="lastPoll">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Jobs Processed</div>
+    <div class="value" id="jobCount">0</div>
+  </div>
+
+  <div class="row">
+    <button class="btn btn-primary" id="pollBtn">Poll Jobs Now</button>
+  </div>
+
+  <div class="section-title">SeatOS Authentication</div>
+  <textarea id="jwtInput" placeholder="Paste your SeatOS JWT token here…"></textarea>
+  <div class="row">
+    <button class="btn btn-secondary" id="saveJwt">Save Token</button>
+    <button class="btn btn-secondary" id="clearJwt">Clear</button>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // Load stored state
+    chrome.storage.local.get(['lastPoll', 'jobsProcessed', 'seatosJwt'], data => {
+      document.getElementById('lastPoll').textContent =
+        data.lastPoll ? new Date(data.lastPoll).toLocaleTimeString() : '—';
+      document.getElementById('jobCount').textContent = data.jobsProcessed || 0;
+      if (data.seatosJwt) {
+        // Show masked token
+        document.getElementById('jwtInput').value = data.seatosJwt;
+      }
+    });
+
+    // Poll now
+    document.getElementById('pollBtn').addEventListener('click', () => {
+      const btn = document.getElementById('pollBtn');
+      btn.textContent = 'Polling…';
+      btn.disabled = true;
+      chrome.runtime.sendMessage({ type: 'poll' }, () => {
+        btn.textContent = 'Poll Jobs Now';
+        btn.disabled = false;
+        chrome.storage.local.get(['lastPoll', 'jobsProcessed'], data => {
+          document.getElementById('lastPoll').textContent =
+            data.lastPoll ? new Date(data.lastPoll).toLocaleTimeString() : '—';
+          document.getElementById('jobCount').textContent = data.jobsProcessed || 0;
+        });
+      });
+    });
+
+    // Save JWT
+    document.getElementById('saveJwt').addEventListener('click', () => {
+      const token = document.getElementById('jwtInput').value.trim();
+      if (!token) { showToast('Token is empty', true); return; }
+      chrome.storage.local.set({ seatosJwt: token }, () => {
+        showToast('Token saved.');
+      });
+    });
+
+    // Clear JWT
+    document.getElementById('clearJwt').addEventListener('click', () => {
+      document.getElementById('jwtInput').value = '';
+      chrome.storage.local.remove('seatosJwt', () => showToast('Token cleared.'));
+    });
+
+    function showToast(msg, isError = false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast' + (isError ? ' error' : '');
+      setTimeout(() => { t.textContent = ''; }, 3000);
+    }
+  </script>
+</body>
+</html>
