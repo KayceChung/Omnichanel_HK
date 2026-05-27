@@ -3,7 +3,7 @@
   "name": "OmniChannel OTA Bridge",
   "version": "1.0.0",
   "description": "Polls OmniChannel for pending jobs and executes platform API calls using your live browser session.",
-  "permissions": ["storage", "alarms", "notifications"],
+  "permissions": ["storage", "alarms", "notifications", "cookies"],
   "host_permissions": [
     "https://supply.klook.com/*",
     "https://api.12go.asia/*",

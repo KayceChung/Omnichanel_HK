@@ -41,7 +41,11 @@
   </div>
 
   <div class="section-title">SeatOS Authentication</div>
-  <textarea id="jwtInput" placeholder="Paste your SeatOS JWT token here…"></textarea>
+  <div class="card" id="jwtStatus" style="margin-bottom:8px">
+    <div class="label">Token Source</div>
+    <div class="value" id="jwtSource">Checking…</div>
+  </div>
+  <textarea id="jwtInput" placeholder="Paste JWT token manually (only if auto-detect fails)…"></textarea>
   <div class="row">
     <button class="btn btn-secondary" id="saveJwt">Save Token</button>
     <button class="btn btn-secondary" id="clearJwt">Clear</button>
@@ -49,15 +53,31 @@
   <div class="toast" id="toast"></div>
 
   <script>
+    // Auto-detect cookie from SeatOS tab
+    function detectCookie() {
+      chrome.cookies.get(
+        { url: 'https://hkbuslineandopentour.seatos.com', name: 'jwt_token' },
+        cookie => {
+          if (cookie?.value) {
+            document.getElementById('jwtSource').textContent = 'Auto (SeatOS session active)';
+            document.getElementById('jwtSource').style.color = '#16a34a';
+          } else {
+            document.getElementById('jwtSource').textContent = 'Manual (log in to SeatOS first)';
+            document.getElementById('jwtSource').style.color = '#ca8a04';
+          }
+        }
+      );
+    }
+
     // Load stored state
-    chrome.storage.local.get(['lastPoll', 'jobsProcessed', 'seatosJwt'], data => {
+    chrome.storage.local.get(['lastPoll', 'jobsProcessed', 'seatosJwt', 'seatosJwtSource'], data => {
       document.getElementById('lastPoll').textContent =
         data.lastPoll ? new Date(data.lastPoll).toLocaleTimeString() : '—';
       document.getElementById('jobCount').textContent = data.jobsProcessed || 0;
       if (data.seatosJwt) {
-        // Show masked token
         document.getElementById('jwtInput').value = data.seatosJwt;
       }
+      detectCookie();
     });
 
     // Poll now

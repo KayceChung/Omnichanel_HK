@@ -122,8 +122,22 @@ async function executePlatformPush(job) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function getSeatosJwt() {
+  // Try reading live cookie from the browser session first
+  try {
+    const cookie = await chrome.cookies.get({
+      url:  'https://hkbuslineandopentour.seatos.com',
+      name: 'jwt_token',
+    });
+    if (cookie?.value) {
+      // Cache it so popup can show status
+      await chrome.storage.local.set({ seatosJwt: cookie.value, seatosJwtSource: 'auto' });
+      return cookie.value;
+    }
+  } catch (_) { /* cookies API unavailable */ }
+
+  // Fallback: manually saved token from popup
   const data = await chrome.storage.local.get('seatosJwt');
-  if (!data.seatosJwt) throw new Error('SeatOS JWT not configured. Open the extension popup and paste your token.');
+  if (!data.seatosJwt) throw new Error('SeatOS JWT not found. Log in to SeatOS or paste token in the extension popup.');
   return data.seatosJwt;
 }
 
