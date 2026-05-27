@@ -1,5 +1,5 @@
 // Replace with your Railway URL before loading the extension.
-const API_URL = 'https://your-app.up.railway.app';
+const API_URL = 'https://omnichanelhk-production.up.railway.app';
 const SEATOS_BASE = 'https://hkbuslineandopentour.seatos.com';
 
 chrome.alarms.create('poll', { periodInMinutes: 1 });
