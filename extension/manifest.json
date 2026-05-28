@@ -6,6 +6,7 @@
   "permissions": ["storage", "alarms", "notifications", "cookies"],
   "host_permissions": [
     "https://supply.klook.com/*",
+    "https://merchant.klook.com/*",
     "https://api.12go.asia/*",
     "https://supply.trip.com/*",
     "https://hkbuslineandopentour.seatos.com/*",

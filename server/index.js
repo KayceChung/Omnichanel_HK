@@ -13,6 +13,7 @@ app.use('/api/products',  require('./routes/products'));
 app.use('/api/jobs',      require('./routes/jobs'));
 app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/seatos',    require('./routes/seatos'));
+app.use('/api/klook',     require('./routes/klook'));
 
 // Serve dashboard if dist exists (built on Railway or locally)
 const dist = path.join(__dirname, '../dashboard/dist');

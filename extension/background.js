@@ -57,6 +57,10 @@ async function executeJob(job) {
     if (job.type === 'sync_trips') {
       const { start_date, end_date } = job.payload;
       result = await syncSeatosTrips(start_date, end_date);
+    } else if (job.type === 'klook_sync_calendar') {
+      result = await executeKlookSyncCalendar(job.payload);
+    } else if (job.type === 'klook_update_schedule') {
+      result = await executeKlookUpdateSchedule(job.payload);
     } else {
       ({ result, external_id } = await executePlatformPush(job));
     }
@@ -109,6 +113,76 @@ async function syncSeatosTrips(startDate, endDate) {
   const result = await importRes.json();
   await chrome.storage.local.set({ lastAutoSync: Date.now(), lastSyncResult: result });
   return result;
+}
+
+// ── Klook jobs ────────────────────────────────────────────────────────────────
+
+const KLOOK_BASE = 'https://merchant.klook.com';
+const KLOOK_HEADERS = {
+  'Accept':             'application/json, text/plain, */*',
+  'Content-Type':       'application/json;charset=UTF-8',
+  'x-klook-admin-host': 'global',
+  'x-platform':         'desktop',
+  'x-req-client':       'experiencesmerchant',
+  'version':            '3',
+};
+
+async function klookFetch(url, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    headers:     { ...KLOOK_HEADERS, ...(options.headers || {}) },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Klook HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const json = await res.json();
+  if (!json.success) throw new Error(`Klook API error: ${json.error?.message || 'unknown'}`);
+  return json;
+}
+
+async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_date }) {
+  const start = `${start_date} 00:00:00`;
+  const end   = `${end_date} 23:59:59`;
+  const url   = `${KLOOK_BASE}/v1/productadminbffsrv/merchant/calendar_service/get_calendar_by_sku_id?sku_id=${sku_id}&start_time=${encodeURIComponent(start)}&end_time=${encodeURIComponent(end)}`;
+
+  const json     = await klookFetch(url);
+  const calendar = (json.result?.calendar ?? []).map(slot => ({
+    start_time:     slot.start_time,
+    published:      slot.published,
+    inv_quantity:   slot.inv_quantity,
+    sales:          slot.sales,
+    publish_status: slot.publish_status,
+    price:          slot.price,
+    cut_off_time:   slot.cut_off_time,
+    is_empty:       slot.is_empty,
+  }));
+
+  const importRes = await fetch(`${API_URL}/api/klook/import-calendar`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ sku_id, activity_id, calendar }),
+  });
+  if (!importRes.ok) throw new Error(`Import failed: ${importRes.status}`);
+  return await importRes.json();
+}
+
+async function executeKlookUpdateSchedule({ sku_id, start_time, published, inv_quantity, price, cut_off_time }) {
+  const body = {
+    sku_id,
+    start_time,
+    published:    published ?? true,
+    inv_quantity: inv_quantity ?? 0,
+    cut_off_time: cut_off_time ?? 147600,
+  };
+  if (price) body.price = price;
+
+  const json = await klookFetch(
+    `${KLOOK_BASE}/v1/productadminbffsrv/merchant/calendar_service/creates_or_update_single_schedule`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+  return { success: json.success };
 }
 
 // ── OTA platform push ─────────────────────────────────────────────────────────
