@@ -13,12 +13,13 @@ const nextMonth = () => {
 };
 
 export default function Klook() {
-  const [slots,       setSlots]       = useState([]);
-  const [syncForm,    setSyncForm]    = useState({ sku_id: '', activity_id: '', start_date: today(), end_date: nextMonth() });
-  const [filterSku,   setFilterSku]   = useState('');
-  const [syncing,     setSyncing]     = useState(false);
-  const [syncResult,  setSyncResult]  = useState(null);
-  const [actionMsg,   setActionMsg]   = useState({});
+  const [slots,      setSlots]      = useState([]);
+  const [knownSkus,  setKnownSkus]  = useState([]);
+  const [syncForm,   setSyncForm]   = useState({ sku_id: '', activity_id: '', start_date: today(), end_date: nextMonth() });
+  const [filterSku,  setFilterSku]  = useState('');
+  const [syncing,    setSyncing]    = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [actionMsg,  setActionMsg]  = useState({});
 
   const reload = useCallback(async (skuId) => {
     const qs = skuId ? `?sku_id=${encodeURIComponent(skuId)}` : '';
@@ -26,7 +27,20 @@ export default function Klook() {
     if (res.ok) setSlots(await res.json());
   }, []);
 
-  useEffect(() => { reload(filterSku); }, [reload, filterSku]);
+  const loadSkus = useCallback(async () => {
+    const res = await fetch(`${API}/api/klook/skus`);
+    if (res.ok) setKnownSkus(await res.json());
+  }, []);
+
+  useEffect(() => {
+    loadSkus();
+    reload(filterSku);
+  }, [loadSkus, reload, filterSku]);
+
+  function selectSku(sku) {
+    setSyncForm(f => ({ ...f, sku_id: sku.sku_id, activity_id: sku.activity_id || '' }));
+    setFilterSku(sku.sku_id);
+  }
 
   async function handleSync(e) {
     e.preventDefault();
@@ -42,7 +56,7 @@ export default function Klook() {
       if (!res.ok) throw new Error(job.error);
       setSyncResult({ type: 'ok', message: `Sync job #${job.id} queued — extension will process it shortly.` });
       setFilterSku(String(syncForm.sku_id));
-      setTimeout(() => reload(String(syncForm.sku_id)), 5000);
+      setTimeout(() => { reload(String(syncForm.sku_id)); loadSkus(); }, 5000);
     } catch (err) {
       setSyncResult({ type: 'error', message: err.message });
     } finally {
@@ -81,6 +95,48 @@ export default function Klook() {
   return (
     <div>
       <h2 style={{ margin: '0 0 16px', fontSize: 18 }}>Klook Calendar</h2>
+
+      {/* Known SKU chips */}
+      {knownSkus.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 8 }}>KNOWN SKUs</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {knownSkus.map(sku => (
+              <button
+                key={sku.sku_id}
+                onClick={() => selectSku(sku)}
+                style={{
+                  padding: '5px 14px',
+                  border: filterSku === sku.sku_id ? '2px solid #d97706' : '1px solid #fde68a',
+                  borderRadius: 20,
+                  background: filterSku === sku.sku_id ? '#fef3c7' : '#fffbeb',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: filterSku === sku.sku_id ? 600 : 400,
+                  color: '#92400e',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span>{sku.sku_id}</span>
+                <span style={{ fontSize: 11, color: '#b45309', background: '#fde68a', borderRadius: 10, padding: '1px 6px' }}>
+                  {sku.slot_count} slots
+                </span>
+              </button>
+            ))}
+            {filterSku && (
+              <button
+                onClick={() => { setFilterSku(''); setSyncForm(f => ({ ...f, sku_id: '', activity_id: '' })); }}
+                style={{ padding: '5px 12px', border: '1px solid #e5e7eb', borderRadius: 20,
+                         background: '#fff', cursor: 'pointer', fontSize: 12, color: '#6b7280' }}
+              >
+                × Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Sync form */}
       <form
@@ -217,7 +273,9 @@ export default function Klook() {
           {slots.length === 0 && (
             <tr>
               <td colSpan={7} style={{ ...td, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
-                No calendar data yet — enter a SKU ID and click Sync Calendar.
+                {knownSkus.length > 0
+                  ? 'Click a SKU chip above to load its calendar.'
+                  : 'No calendar data yet — enter a SKU ID and click Sync Calendar.'}
               </td>
             </tr>
           )}

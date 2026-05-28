@@ -1,6 +1,31 @@
 const router = require('express').Router();
 const { pool } = require('../db');
 
+// Return distinct SKU IDs already stored in the DB
+router.get('/skus', async (req, res) => {
+  try {
+    const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='klook'");
+    if (!platform.length) return res.json([]);
+
+    const { rows } = await pool.query(
+      `SELECT DISTINCT
+         pl.platform_data->>'sku_id'       AS sku_id,
+         pl.platform_data->>'activity_id'  AS activity_id,
+         MAX(pl.last_synced_at)            AS last_synced_at,
+         COUNT(*)::int                     AS slot_count
+       FROM platform_listings pl
+       WHERE pl.platform_id = $1
+         AND pl.platform_data->>'sku_id' IS NOT NULL
+       GROUP BY pl.platform_data->>'sku_id', pl.platform_data->>'activity_id'
+       ORDER BY MAX(pl.last_synced_at) DESC`,
+      [platform[0].id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Return Klook calendar slots stored in the DB, optionally filtered by sku_id
 router.get('/calendar', async (req, res) => {
   try {
