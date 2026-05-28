@@ -18,5 +18,18 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "OmniChannel Bridge"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://merchant.klook.com/*"],
+      "js": ["content-klook.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page-interceptor.js"],
+      "matches": ["https://merchant.klook.com/*"]
+    }
+  ]
 }

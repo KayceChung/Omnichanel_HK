@@ -13,6 +13,32 @@ function detectCookie() {
   );
 }
 
+function loadKlookSkus() {
+  chrome.storage.local.get('klookSkus', data => {
+    const skus = data.klookSkus || [];
+    const title     = document.getElementById('klookTitle');
+    const container = document.getElementById('klookSkus');
+    if (!skus.length) { title.style.display = 'none'; container.innerHTML = ''; return; }
+    title.style.display = '';
+    container.innerHTML = skus.map(sku => `
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+        <span style="flex:1;font-size:12px;font-family:monospace;background:#fef3c7;color:#92400e;padding:3px 8px;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sku.sku_id}</span>
+        <button class="btn btn-secondary sync-klook-btn" data-sku="${sku.sku_id}" data-activity="${sku.activity_id || ''}" style="flex:0 0 auto;padding:4px 10px;font-size:11px">Sync</button>
+      </div>
+    `).join('');
+    container.querySelectorAll('.sync-klook-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        btn.textContent = '…';
+        btn.disabled = true;
+        chrome.runtime.sendMessage({ type: 'syncKlookSku', sku_id: btn.dataset.sku, activity_id: btn.dataset.activity }, res => {
+          btn.textContent = res?.ok ? 'Queued!' : 'Error';
+          setTimeout(() => { btn.textContent = 'Sync'; btn.disabled = false; }, 3000);
+        });
+      });
+    });
+  });
+}
+
 function loadState() {
   chrome.storage.local.get(['lastPoll', 'jobsProcessed', 'seatosJwt', 'lastAutoSync', 'lastSyncResult'], data => {
     document.getElementById('lastPoll').textContent =
@@ -33,6 +59,7 @@ function loadState() {
 }
 
 loadState();
+loadKlookSkus();
 
 // Poll jobs now
 document.getElementById('pollBtn').addEventListener('click', () => {

@@ -31,6 +31,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch(err   => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+  if (msg.type === 'klookSkuDetected') {
+    chrome.storage.local.get('klookSkus', data => {
+      const skus = data.klookSkus || [];
+      if (!skus.some(s => s.sku_id === msg.sku_id)) {
+        skus.unshift({ sku_id: msg.sku_id, activity_id: msg.activity_id, detected_at: Date.now() });
+        if (skus.length > 20) skus.length = 20;
+        chrome.storage.local.set({ klookSkus: skus });
+      }
+    });
+    return false;
+  }
+  if (msg.type === 'syncKlookSku') {
+    const today = new Date().toISOString().slice(0, 10);
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + 1);
+    const end = endDate.toISOString().slice(0, 10);
+    fetch(`${API_URL}/api/klook/sync-calendar`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ sku_id: msg.sku_id, activity_id: msg.activity_id || '', start_date: today, end_date: end }),
+    })
+      .then(r => r.ok ? sendResponse({ ok: true }) : r.json().then(j => sendResponse({ ok: false, error: j.error })))
+      .catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 // ── Job queue (dashboard-initiated) ──────────────────────────────────────────
