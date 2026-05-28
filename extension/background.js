@@ -167,7 +167,7 @@ async function klookFetch(url, options = {}) {
   return json;
 }
 
-async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_date }) {
+async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_date, product_name }) {
   const start = `${start_date} 00:00:00`;
   const end   = `${end_date} 23:59:59`;
   const url   = `${KLOOK_BASE}/v1/productadminbffsrv/merchant/calendar_service/get_calendar_by_sku_id?sku_id=${sku_id}&start_time=${encodeURIComponent(start)}&end_time=${encodeURIComponent(end)}`;
@@ -187,7 +187,7 @@ async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_d
   const importRes = await fetch(`${API_URL}/api/klook/import-calendar`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ sku_id, activity_id, calendar }),
+    body:    JSON.stringify({ sku_id, activity_id, calendar, product_name: product_name || null }),
   });
   if (!importRes.ok) throw new Error(`Import failed: ${importRes.status}`);
   return await importRes.json();

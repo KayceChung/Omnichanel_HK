@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -15,7 +15,7 @@ const nextMonth = () => {
 export default function Klook() {
   const [slots,      setSlots]      = useState([]);
   const [knownSkus,  setKnownSkus]  = useState([]);
-  const [syncForm,   setSyncForm]   = useState({ sku_id: '', activity_id: '', start_date: today(), end_date: nextMonth() });
+  const [syncForm,   setSyncForm]   = useState({ sku_id: '', activity_id: '', product_name: '', start_date: today(), end_date: nextMonth() });
   const [filterSku,  setFilterSku]  = useState('');
   const [syncing,    setSyncing]    = useState(false);
   const [syncResult, setSyncResult] = useState(null);
@@ -50,7 +50,7 @@ export default function Klook() {
       const res = await fetch(`${API}/api/klook/sync-calendar`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(syncForm),
+        body:    JSON.stringify({ ...syncForm, product_name: syncForm.product_name || undefined }),
       });
       const job = await res.json();
       if (!res.ok) throw new Error(job.error);
@@ -155,10 +155,16 @@ export default function Klook() {
               style={{ width: 130, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
             />
             <input
+              placeholder="Tên sản phẩm (vd: Nha Trang → Hội An)"
+              value={syncForm.product_name}
+              onChange={e => setSyncForm(f => ({ ...f, product_name: e.target.value }))}
+              style={{ width: 240, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
+            />
+            <input
               placeholder="Activity ID (optional)"
               value={syncForm.activity_id}
               onChange={e => setSyncForm(f => ({ ...f, activity_id: e.target.value }))}
-              style={{ width: 160, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
+              style={{ width: 130, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
             />
             <input
               type="date" value={syncForm.start_date}
@@ -214,62 +220,91 @@ export default function Klook() {
           </tr>
         </thead>
         <tbody>
-          {slots.map(slot => {
-            const meta      = slot.platform_data || {};
-            const published = meta.published ?? meta.publish_status === 'published';
-            const price     = meta.price;
-            const retail    = price?.retail_price ?? price?.retailPrice;
-            return (
-              <tr key={slot.id} style={{ borderBottom: '1px solid #e5e7eb', background: published ? '#fff' : '#f9fafb' }}>
-                <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                  <strong>{meta.start_time || '—'}</strong>
-                </td>
-                <td style={{ ...td, color: '#6b7280', fontSize: 12 }}>{meta.sku_id || '—'}</td>
-                <td style={td}>
-                  <span style={{
-                    display: 'inline-block',
-                    padding: '2px 8px', borderRadius: 12,
-                    fontSize: 12, fontWeight: 600,
-                    background: published ? '#dcfce7' : '#f3f4f6',
-                    color: published ? '#16a34a' : '#6b7280',
-                  }}>
-                    {published ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td style={td}>{meta.inv_quantity ?? '—'}</td>
-                <td style={td}>{meta.sales ?? '—'}</td>
-                <td style={{ ...td, fontSize: 13 }}>
-                  {retail ? retail.toLocaleString() : '—'}
-                </td>
-                <td style={td}>
-                  {actionMsg[slot.id] ? (
-                    <span style={{ fontSize: 12, color: '#6b7280' }}>{actionMsg[slot.id]}</span>
-                  ) : (
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {!published && (
-                        <button
-                          onClick={() => handleToggle(slot, true)}
-                          style={{ padding: '4px 12px', fontSize: 12, background: '#dcfce7',
-                                   color: '#16a34a', border: '1px solid #86efac', borderRadius: 4, cursor: 'pointer' }}
-                        >
-                          Activate
-                        </button>
-                      )}
-                      {published && (
-                        <button
-                          onClick={() => handleToggle(slot, false)}
-                          style={{ padding: '4px 12px', fontSize: 12, background: '#fef2f2',
-                                   color: '#dc2626', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' }}
-                        >
-                          Deactivate
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
+          {(() => {
+            // Group rows by product name so we can show a header per group
+            const groups = [];
+            let lastKey = null;
+            for (const slot of slots) {
+              const meta = slot.platform_data || {};
+              const groupKey = meta.product_name || meta.sku_id || '—';
+              if (groupKey !== lastKey) {
+                groups.push({ key: groupKey, label: meta.product_name, sku: meta.sku_id, slots: [] });
+                lastKey = groupKey;
+              }
+              groups[groups.length - 1].slots.push(slot);
+            }
+            return groups.map(group => (
+              <Fragment key={group.key}>
+                {group.label && (
+                  <tr>
+                    <td colSpan={7} style={{ padding: '10px 12px 6px', background: '#fef3c7',
+                                             borderBottom: '1px solid #fde68a', fontSize: 13 }}>
+                      <strong style={{ color: '#92400e' }}>{group.label}</strong>
+                      <span style={{ marginLeft: 10, fontSize: 11, color: '#b45309' }}>
+                        SKU {group.sku} · {group.slots.length} timeslots
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {group.slots.map(slot => {
+                  const meta      = slot.platform_data || {};
+                  const published = meta.published ?? meta.publish_status === 'published';
+                  const price     = meta.price;
+                  const retail    = price?.retail_price ?? price?.retailPrice;
+                  return (
+                    <tr key={slot.id} style={{ borderBottom: '1px solid #e5e7eb', background: published ? '#fff' : '#f9fafb' }}>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        <strong>{meta.start_time || '—'}</strong>
+                      </td>
+                      <td style={{ ...td, color: '#6b7280', fontSize: 12 }}>{meta.sku_id || '—'}</td>
+                      <td style={td}>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '2px 8px', borderRadius: 12,
+                          fontSize: 12, fontWeight: 600,
+                          background: published ? '#dcfce7' : '#f3f4f6',
+                          color: published ? '#16a34a' : '#6b7280',
+                        }}>
+                          {published ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td style={td}>{meta.inv_quantity ?? '—'}</td>
+                      <td style={td}>{meta.sales ?? '—'}</td>
+                      <td style={{ ...td, fontSize: 13 }}>
+                        {retail ? retail.toLocaleString() : '—'}
+                      </td>
+                      <td style={td}>
+                        {actionMsg[slot.id] ? (
+                          <span style={{ fontSize: 12, color: '#6b7280' }}>{actionMsg[slot.id]}</span>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {!published && (
+                              <button
+                                onClick={() => handleToggle(slot, true)}
+                                style={{ padding: '4px 12px', fontSize: 12, background: '#dcfce7',
+                                         color: '#16a34a', border: '1px solid #86efac', borderRadius: 4, cursor: 'pointer' }}
+                              >
+                                Activate
+                              </button>
+                            )}
+                            {published && (
+                              <button
+                                onClick={() => handleToggle(slot, false)}
+                                style={{ padding: '4px 12px', fontSize: 12, background: '#fef2f2',
+                                         color: '#dc2626', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' }}
+                              >
+                                Deactivate
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Fragment>
+            ));
+          })()}
           {slots.length === 0 && (
             <tr>
               <td colSpan={7} style={{ ...td, textAlign: 'center', color: '#9ca3af', padding: 40 }}>

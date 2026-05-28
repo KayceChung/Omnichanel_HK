@@ -56,7 +56,7 @@ router.get('/calendar', async (req, res) => {
 
 // Enqueue a job for the extension to read Klook calendar
 router.post('/sync-calendar', async (req, res) => {
-  const { sku_id, activity_id, start_date, end_date } = req.body;
+  const { sku_id, activity_id, start_date, end_date, product_name } = req.body;
   if (!sku_id || !start_date || !end_date) {
     return res.status(400).json({ error: 'sku_id, start_date, end_date required' });
   }
@@ -67,7 +67,7 @@ router.post('/sync-calendar', async (req, res) => {
     const { rows: job } = await pool.query(
       `INSERT INTO jobs (type, platform_id, payload, status)
        VALUES ('klook_sync_calendar', $1, $2, 'pending') RETURNING *`,
-      [platform[0].id, JSON.stringify({ sku_id, activity_id, start_date, end_date })]
+      [platform[0].id, JSON.stringify({ sku_id, activity_id, start_date, end_date, product_name })]
     );
     res.status(201).json(job[0]);
   } catch (err) {
@@ -98,7 +98,7 @@ router.post('/update-schedule', async (req, res) => {
 
 // Store imported Klook calendar data
 router.post('/import-calendar', async (req, res) => {
-  const { sku_id, activity_id, calendar } = req.body;
+  const { sku_id, activity_id, calendar, product_name } = req.body;
   if (!sku_id || !Array.isArray(calendar)) {
     return res.status(400).json({ error: 'sku_id and calendar array required' });
   }
@@ -107,13 +107,17 @@ router.post('/import-calendar', async (req, res) => {
     if (!platform.length) return res.status(404).json({ error: 'klook platform not found' });
     const platformId = platform[0].id;
 
+    // Use provided product name, or keep existing, or fall back to SKU number
+    const skuLabel = product_name || `SKU ${sku_id}`;
+
     let upserted = 0;
     for (const slot of calendar) {
-      const title       = `SKU ${sku_id} — ${slot.start_time}`;
+      const title       = skuLabel;
       const externalId  = `${sku_id}::${slot.start_time}`;
       const meta        = JSON.stringify({
         sku_id,
         activity_id,
+        product_name:   product_name || null,
         start_time:     slot.start_time,
         published:      slot.published,
         inv_quantity:   slot.inv_quantity,
