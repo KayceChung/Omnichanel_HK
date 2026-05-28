@@ -1,14 +1,18 @@
 import { useState } from 'react';
 import Products from './pages/Products.jsx';
+import SeatOS from './pages/SeatOS.jsx';
+import Klook from './pages/Klook.jsx';
 import Jobs from './pages/Jobs.jsx';
 
 const NAV = [
   { key: 'products', label: 'Products' },
+  { key: 'seatos',   label: 'SeatOS' },
+  { key: 'klook',    label: 'Klook' },
   { key: 'jobs',     label: 'Jobs' },
 ];
 
 export default function App() {
-  const [tab, setTab] = useState('products');
+  const [tab, setTab] = useState('seatos');
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 1200, margin: '0 auto', padding: 24 }}>
@@ -37,7 +41,10 @@ export default function App() {
           ))}
         </nav>
       </header>
-      {tab === 'products' ? <Products /> : <Jobs />}
+      {tab === 'products' && <Products />}
+      {tab === 'seatos'   && <SeatOS />}
+      {tab === 'klook'    && <Klook />}
+      {tab === 'jobs'     && <Jobs />}
     </div>
   );
 }

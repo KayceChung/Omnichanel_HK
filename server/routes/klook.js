@@ -1,6 +1,34 @@
 const router = require('express').Router();
 const { pool } = require('../db');
 
+// Return Klook calendar slots stored in the DB, optionally filtered by sku_id
+router.get('/calendar', async (req, res) => {
+  try {
+    const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='klook'");
+    if (!platform.length) return res.status(404).json({ error: 'klook platform not found' });
+
+    const params = [platform[0].id];
+    let where = 'WHERE pl.platform_id = $1';
+    if (req.query.sku_id) {
+      where += ` AND pl.platform_data->>'sku_id' = $2`;
+      params.push(String(req.query.sku_id));
+    }
+
+    const { rows } = await pool.query(
+      `SELECT p.id, p.title, p.status,
+              pl.external_id, pl.platform_data, pl.last_synced_at
+       FROM platform_listings pl
+       JOIN products p ON p.id = pl.product_id
+       ${where}
+       ORDER BY pl.platform_data->>'start_time' ASC NULLS LAST`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Enqueue a job for the extension to read Klook calendar
 router.post('/sync-calendar', async (req, res) => {
   const { sku_id, activity_id, start_date, end_date } = req.body;

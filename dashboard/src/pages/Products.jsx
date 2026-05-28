@@ -14,17 +14,12 @@ const STATUS_COLOR = {
 const th = { padding: '10px 12px', fontWeight: 600, fontSize: 13, textAlign: 'left', background: '#f3f4f6' };
 const td = { padding: '10px 12px', verticalAlign: 'top', fontSize: 14 };
 
-const today = () => new Date().toISOString().slice(0, 10);
-
 export default function Products() {
-  const [products,   setProducts]   = useState([]);
-  const [platforms,  setPlatforms]  = useState([]);
-  const [form,       setForm]       = useState({ title: '', description: '', base_price: '', currency: 'USD' });
-  const [saving,     setSaving]     = useState(false);
-  const [formError,  setFormError]  = useState('');
-  const [syncDates,  setSyncDates]  = useState({ start: today(), end: today() });
-  const [syncing,    setSyncing]    = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
+  const [products,  setProducts]  = useState([]);
+  const [platforms, setPlatforms] = useState([]);
+  const [form,      setForm]      = useState({ title: '', description: '', base_price: '', currency: 'USD' });
+  const [saving,    setSaving]    = useState(false);
+  const [formError, setFormError] = useState('');
 
   const reload = useCallback(async () => {
     const [pRes, plRes] = await Promise.all([
@@ -73,67 +68,8 @@ export default function Products() {
     await reload();
   }
 
-  async function handleSync(e) {
-    e.preventDefault();
-    setSyncing(true);
-    setSyncResult(null);
-    try {
-      const res = await fetch(`${API}/api/seatos/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start_date: syncDates.start, end_date: syncDates.end }),
-      });
-      const job = await res.json();
-      if (!res.ok) throw new Error(job.error);
-      setSyncResult({ type: 'ok', message: `Sync job #${job.id} queued — extension will process it shortly.` });
-      setTimeout(reload, 3000);
-    } catch (err) {
-      setSyncResult({ type: 'error', message: err.message });
-    } finally {
-      setSyncing(false);
-    }
-  }
-
   return (
     <div>
-      {/* SeatOS sync */}
-      <form
-        onSubmit={handleSync}
-        style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap',
-                 marginBottom: 12, background: '#eff6ff', padding: 12, borderRadius: 8,
-                 border: '1px solid #bfdbfe' }}
-      >
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#1d4ed8', marginBottom: 4 }}>SYNC FROM SEATOS (12Go)</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="date" value={syncDates.start}
-              onChange={e => setSyncDates(d => ({ ...d, start: e.target.value }))}
-              style={{ padding: '6px 8px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 13 }}
-            />
-            <span style={{ alignSelf: 'center', color: '#6b7280' }}>→</span>
-            <input
-              type="date" value={syncDates.end}
-              onChange={e => setSyncDates(d => ({ ...d, end: e.target.value }))}
-              style={{ padding: '6px 8px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 13 }}
-            />
-            <button
-              type="submit" disabled={syncing}
-              style={{ padding: '6px 16px', background: '#1d4ed8', color: '#fff',
-                       border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-            >
-              {syncing ? 'Queuing…' : 'Sync Trips'}
-            </button>
-          </div>
-        </div>
-        {syncResult && (
-          <p style={{ width: '100%', margin: 0, fontSize: 13,
-                      color: syncResult.type === 'ok' ? '#1d4ed8' : '#dc2626' }}>
-            {syncResult.message}
-          </p>
-        )}
-      </form>
-
       {/* Add form */}
       <form
         onSubmit={handleAdd}

@@ -1,6 +1,27 @@
 const router = require('express').Router();
 const { pool } = require('../db');
 
+// Return all SeatOS trips stored in the DB (with platform_data metadata)
+router.get('/trips', async (req, res) => {
+  try {
+    const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='seatos'");
+    if (!platform.length) return res.status(404).json({ error: 'seatos platform not found' });
+
+    const { rows } = await pool.query(
+      `SELECT p.id, p.title, p.description, p.status,
+              pl.external_id, pl.platform_data, pl.last_synced_at
+       FROM platform_listings pl
+       JOIN products p ON p.id = pl.product_id
+       WHERE pl.platform_id = $1
+       ORDER BY (pl.platform_data->>'departure') ASC NULLS LAST, p.created_at DESC`,
+      [platform[0].id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Enqueue a job for the extension to fetch trips from SeatOS and import them.
 // The extension executes the actual SeatOS API call (it holds the JWT).
 router.post('/sync', async (req, res) => {
