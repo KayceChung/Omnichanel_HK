@@ -1,15 +1,38 @@
-// Replace with your Railway URL before loading the extension.
-const API_URL = 'https://omnichanelhk-production.up.railway.app';
+const API_URL    = 'https://omnichanelhk-production.up.railway.app';
 const SEATOS_BASE = 'https://hkbuslineandopentour.seatos.com';
 
-chrome.alarms.create('poll', { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'poll') pollJobs(); });
-chrome.runtime.onInstalled.addListener(pollJobs);
-chrome.runtime.onStartup.addListener(pollJobs);
+// Poll jobs every 1 min; auto-sync SeatOS trips every 60 min
+chrome.alarms.create('poll',     { periodInMinutes: 1  });
+chrome.alarms.create('autoSync', { periodInMinutes: 60 });
+
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === 'poll')     pollJobs();
+  if (alarm.name === 'autoSync') autoSyncToday();
+});
+
+chrome.runtime.onInstalled.addListener(() => { pollJobs(); autoSyncToday(); });
+chrome.runtime.onStartup.addListener(()   => { pollJobs(); autoSyncToday(); });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type === 'poll') { pollJobs().then(() => sendResponse({ ok: true })); return true; }
+  if (msg.type === 'poll') {
+    pollJobs().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (msg.type === 'syncToday') {
+    autoSyncToday()
+      .then(result => sendResponse({ ok: true, result }))
+      .catch(err   => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.type === 'syncRange') {
+    syncSeatosTrips(msg.start_date, msg.end_date)
+      .then(result => sendResponse({ ok: true, result }))
+      .catch(err   => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
+
+// ── Job queue (dashboard-initiated) ──────────────────────────────────────────
 
 async function pollJobs() {
   try {
@@ -28,15 +51,13 @@ async function executeJob(job) {
 
   try {
     let result, external_id;
-
     if (job.type === 'sync_trips') {
-      ({ result, external_id } = await executeSeatosSync(job));
+      const { start_date, end_date } = job.payload;
+      result = await syncSeatosTrips(start_date, end_date);
     } else {
       ({ result, external_id } = await executePlatformPush(job));
     }
-
-    await reportComplete(job.id, { result, external_id });
-
+    await reportComplete(job.id, { result, external_id: external_id || null });
     const { jobsProcessed = 0 } = await chrome.storage.local.get('jobsProcessed');
     await chrome.storage.local.set({ jobsProcessed: jobsProcessed + 1 });
   } catch (err) {
@@ -44,18 +65,21 @@ async function executeJob(job) {
   }
 }
 
-// ── SeatOS trip sync ──────────────────────────────────────────────────────────
+// ── SeatOS auto-sync ──────────────────────────────────────────────────────────
 
-async function executeSeatosSync(job) {
-  const { start_date, end_date } = job.payload;
+async function autoSyncToday() {
+  const today = new Date().toISOString().slice(0, 10);
+  return syncSeatosTrips(today, today);
+}
+
+async function syncSeatosTrips(startDate, endDate) {
   const jwt = await getSeatosJwt();
 
-  const url = `${SEATOS_BASE}/v3/trips?start_date=${start_date}&end_date=${end_date}&page=1&per_page=100`;
+  const url = `${SEATOS_BASE}/v3/trips?start_date=${startDate}&end_date=${endDate}&page=1&per_page=100`;
   const res = await fetch(url, {
     headers: {
       Accept:        'application/json',
       Authorization: `Bearer ${jwt}`,
-      Cookie:        `jwt_token=${jwt}`,
     },
     credentials: 'include',
   });
@@ -65,9 +89,9 @@ async function executeSeatosSync(job) {
     throw new Error(`SeatOS HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
 
-  const { data: trips } = await res.json();
+  const json = await res.json();
+  const trips = json.data ?? json;
 
-  // POST trips back to Railway for import
   const importRes = await fetch(`${API_URL}/api/seatos/import`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -79,35 +103,21 @@ async function executeSeatosSync(job) {
     throw new Error(`Import failed: ${text.slice(0, 200)}`);
   }
 
-  const importResult = await importRes.json();
-  return { result: importResult, external_id: null };
+  const result = await importRes.json();
+  await chrome.storage.local.set({ lastAutoSync: Date.now(), lastSyncResult: result });
+  return result;
 }
 
 // ── OTA platform push ─────────────────────────────────────────────────────────
 
 async function executePlatformPush(job) {
-  const request = buildRequest(job.platform_name, job.payload);
-
-  const fetchOpts = {
-    method:  request.method,
-    headers: request.headers,
-    body:    JSON.stringify(request.body),
-  };
-
-  // SeatOS uses stored JWT; other platforms use browser session
-  if (job.platform_name === 'seatos') {
-    const jwt = await getSeatosJwt();
-    fetchOpts.headers = {
-      ...fetchOpts.headers,
-      Authorization: `Bearer ${jwt}`,
-      Cookie: `jwt_token=${jwt}`,
-    };
-    fetchOpts.credentials = 'include';
-  } else {
-    fetchOpts.credentials = 'include';
-  }
-
-  const response = await fetch(request.url, fetchOpts);
+  const request  = buildRequest(job.platform_name, job.payload);
+  const response = await fetch(request.url, {
+    method:      request.method,
+    headers:     request.headers,
+    body:        JSON.stringify(request.body),
+    credentials: 'include',
+  });
 
   if (!response.ok) {
     const text = await response.text();
@@ -122,20 +132,17 @@ async function executePlatformPush(job) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function getSeatosJwt() {
-  // Try reading live cookie from the browser session first
   try {
     const cookie = await chrome.cookies.get({
       url:  'https://hkbuslineandopentour.seatos.com',
       name: 'jwt_token',
     });
     if (cookie?.value) {
-      // Cache it so popup can show status
       await chrome.storage.local.set({ seatosJwt: cookie.value, seatosJwtSource: 'auto' });
       return cookie.value;
     }
-  } catch (_) { /* cookies API unavailable */ }
+  } catch (_) {}
 
-  // Fallback: manually saved token from popup
   const data = await chrome.storage.local.get('seatosJwt');
   if (!data.seatosJwt) throw new Error('SeatOS JWT not found. Log in to SeatOS or paste token in the extension popup.');
   return data.seatosJwt;
@@ -156,36 +163,21 @@ function buildRequest(platform, product) {
         method: 'POST',
         url:    'https://supply.klook.com/api/v1/activities',
         headers: { 'Content-Type': 'application/json' },
-        body: {
-          title:       product.title,
-          description: product.description,
-          base_price:  product.base_price,
-          currency:    product.currency,
-        },
+        body: { title: product.title, description: product.description, base_price: product.base_price, currency: product.currency },
       };
     case '12go':
       return {
         method: 'POST',
         url:    'https://api.12go.asia/partner/v1/products',
         headers: { 'Content-Type': 'application/json' },
-        body: {
-          name:        product.title,
-          description: product.description,
-          price:       product.base_price,
-          currency:    product.currency,
-        },
+        body: { name: product.title, description: product.description, price: product.base_price, currency: product.currency },
       };
     case 'tripcom':
       return {
         method: 'POST',
         url:    'https://supply.trip.com/restapi/soa2/18437/createProduct',
         headers: { 'Content-Type': 'application/json' },
-        body: {
-          productName:        product.title,
-          productDescription: product.description,
-          salePrice:          product.base_price,
-          currency:           product.currency,
-        },
+        body: { productName: product.title, productDescription: product.description, salePrice: product.base_price, currency: product.currency },
       };
     default:
       throw new Error(`Unknown platform: ${platform}`);
@@ -194,9 +186,9 @@ function buildRequest(platform, product) {
 
 function extractExternalId(platform, response) {
   switch (platform) {
-    case 'klook':   return response?.data?.activity_id ?? response?.activity_id   ?? null;
-    case '12go':    return response?.product_id        ?? response?.id             ?? null;
-    case 'tripcom': return response?.data?.productId   ?? response?.productId      ?? null;
+    case 'klook':   return response?.data?.activity_id ?? response?.activity_id ?? null;
+    case '12go':    return response?.product_id        ?? response?.id          ?? null;
+    case 'tripcom': return response?.data?.productId   ?? response?.productId   ?? null;
     default:        return null;
   }
 }
