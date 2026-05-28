@@ -10,8 +10,9 @@ chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'autoSync') autoSyncToday();
 });
 
-chrome.runtime.onInstalled.addListener(() => { pollJobs(); autoSyncToday(); });
-chrome.runtime.onStartup.addListener(()   => { pollJobs(); autoSyncToday(); });
+// Delay first run so service worker network stack is ready
+chrome.runtime.onInstalled.addListener(() => setTimeout(() => { pollJobs(); autoSyncToday(); }, 3000));
+chrome.runtime.onStartup.addListener(()   => setTimeout(() => { pollJobs(); autoSyncToday(); }, 3000));
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'poll') {
@@ -36,12 +37,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 async function pollJobs() {
   try {
-    const res  = await fetch(`${API_URL}/api/jobs/pending`);
+    const res = await fetch(`${API_URL}/api/jobs/pending`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return;
     const jobs = await res.json();
     await chrome.storage.local.set({ lastPoll: Date.now() });
     for (const job of jobs) await executeJob(job);
   } catch (err) {
-    console.error('[OmniChannel] Poll error:', err);
+    // Silently ignore network errors (Railway wake-up delay, offline, etc.)
+    console.warn('[OmniChannel] Poll skipped:', err.message);
   }
 }
 
