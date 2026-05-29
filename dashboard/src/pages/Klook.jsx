@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 
 const API = import.meta.env.VITE_API_URL || '';
 
-const th = { padding: '10px 12px', fontWeight: 600, fontSize: 13, textAlign: 'left', background: '#f3f4f6' };
-const td = { padding: '10px 12px', verticalAlign: 'middle', fontSize: 14 };
+const th = { padding: '10px 12px', fontWeight: 600, fontSize: 13, textAlign: 'left', background: '#f3f4f6', whiteSpace: 'nowrap' };
+const td = { padding: '10px 12px', verticalAlign: 'middle', fontSize: 13 };
 
 const today = () => new Date().toISOString().slice(0, 10);
 const nextMonth = () => {
@@ -15,73 +15,58 @@ const nextMonth = () => {
 export default function Klook() {
   const [slots,      setSlots]      = useState([]);
   const [knownSkus,  setKnownSkus]  = useState([]);
-  const [syncForm,   setSyncForm]   = useState({ sku_id: '', activity_id: '', product_name: '', start_date: today(), end_date: nextMonth() });
-  const [filterSku,  setFilterSku]  = useState('');
+  const [activeSku,  setActiveSku]  = useState(null); // currently selected sku object
+  const [skuId,      setSkuId]      = useState('');
+  const [startDate,  setStartDate]  = useState(today());
+  const [endDate,    setEndDate]    = useState(nextMonth());
   const [syncing,    setSyncing]    = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
+  const [syncMsg,    setSyncMsg]    = useState(null);
   const [actionMsg,  setActionMsg]  = useState({});
-  const [renaming,   setRenaming]   = useState(false);
-  const [renameMsg,  setRenameMsg]  = useState('');
 
-  const reload = useCallback(async (skuId) => {
-    const qs = skuId ? `?sku_id=${encodeURIComponent(skuId)}` : '';
-    const res = await fetch(`${API}/api/klook/calendar${qs}`);
-    if (res.ok) setSlots(await res.json());
-  }, []);
-
-  const loadSkus = useCallback(async () => {
+  const reloadSkus = useCallback(async () => {
     const res = await fetch(`${API}/api/klook/skus`);
     if (res.ok) setKnownSkus(await res.json());
   }, []);
 
-  useEffect(() => {
-    loadSkus();
-    reload(filterSku);
-  }, [loadSkus, reload, filterSku]);
+  const reloadSlots = useCallback(async (sid) => {
+    if (!sid) { setSlots([]); return; }
+    const res = await fetch(`${API}/api/klook/calendar?sku_id=${encodeURIComponent(sid)}`);
+    if (res.ok) setSlots(await res.json());
+  }, []);
+
+  useEffect(() => { reloadSkus(); }, [reloadSkus]);
 
   function selectSku(sku) {
-    setSyncForm(f => ({ ...f, sku_id: sku.sku_id, activity_id: sku.activity_id || '' }));
-    setFilterSku(sku.sku_id);
-  }
-
-  async function handleRename() {
-    if (!filterSku || !syncForm.product_name) return;
-    setRenaming(true);
-    setRenameMsg('');
-    try {
-      const res = await fetch(`${API}/api/klook/set-product-name`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ sku_id: filterSku, product_name: syncForm.product_name }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setRenameMsg(`Updated ${data.updated} slots`);
-      reload(filterSku);
-    } catch (err) {
-      setRenameMsg(`Error: ${err.message}`);
-    } finally {
-      setRenaming(false);
-    }
+    setActiveSku(sku);
+    setSkuId(sku.sku_id);
+    setSyncMsg(null);
+    reloadSlots(sku.sku_id);
   }
 
   async function handleSync(e) {
     e.preventDefault();
+    if (!skuId) return;
     setSyncing(true);
-    setSyncResult(null);
+    setSyncMsg(null);
     try {
+      const productName = activeSku?.product_name || null;
       const res = await fetch(`${API}/api/klook/sync-calendar`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ...syncForm, product_name: syncForm.product_name || undefined }),
+        body:    JSON.stringify({
+          sku_id:       skuId,
+          activity_id:  activeSku?.activity_id || '',
+          product_name: productName,
+          start_date:   startDate,
+          end_date:     endDate,
+        }),
       });
       const job = await res.json();
       if (!res.ok) throw new Error(job.error);
-      setSyncResult({ type: 'ok', message: `Sync job #${job.id} queued — extension will process it shortly.` });
-      setFilterSku(String(syncForm.sku_id));
-      setTimeout(() => { reload(String(syncForm.sku_id)); loadSkus(); }, 5000);
+      setSyncMsg({ ok: true, text: `Job #${job.id} queued — extension will process shortly.` });
+      setTimeout(() => { reloadSlots(skuId); reloadSkus(); }, 5000);
     } catch (err) {
-      setSyncResult({ type: 'error', message: err.message });
+      setSyncMsg({ ok: false, text: err.message });
     } finally {
       setSyncing(false);
     }
@@ -108,197 +93,165 @@ export default function Klook() {
       setActionMsg(m => ({ ...m, [slot.id]: `Job #${job.id} queued` }));
       setTimeout(() => {
         setActionMsg(m => { const n = { ...m }; delete n[slot.id]; return n; });
-        reload(filterSku);
+        reloadSlots(skuId);
       }, 4000);
     } catch (err) {
       setActionMsg(m => ({ ...m, [slot.id]: `Error: ${err.message}` }));
     }
   }
 
+  const activeCount  = slots.filter(s => (s.platform_data?.published ?? s.platform_data?.publish_status === 'published')).length;
+  const inactiveCount = slots.length - activeCount;
+
   return (
     <div>
-      <h2 style={{ margin: '0 0 16px', fontSize: 18 }}>Klook Calendar</h2>
-
-      {/* Known SKU chips */}
-      {knownSkus.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 8 }}>KNOWN SKUs</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {knownSkus.map(sku => (
-              <button
-                key={sku.sku_id}
-                onClick={() => selectSku(sku)}
-                style={{
-                  padding: '5px 14px',
-                  border: filterSku === sku.sku_id ? '2px solid #d97706' : '1px solid #fde68a',
-                  borderRadius: 20,
-                  background: filterSku === sku.sku_id ? '#fef3c7' : '#fffbeb',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  fontWeight: filterSku === sku.sku_id ? 600 : 400,
-                  color: '#92400e',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <span>{sku.sku_id}</span>
-                <span style={{ fontSize: 11, color: '#b45309', background: '#fde68a', borderRadius: 10, padding: '1px 6px' }}>
-                  {sku.slot_count} slots
-                </span>
-              </button>
-            ))}
-            {filterSku && (
-              <button
-                onClick={() => { setFilterSku(''); setSyncForm(f => ({ ...f, sku_id: '', activity_id: '' })); }}
-                style={{ padding: '5px 12px', border: '1px solid #e5e7eb', borderRadius: 20,
-                         background: '#fff', cursor: 'pointer', fontSize: 12, color: '#6b7280' }}
-              >
-                × Clear
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Sync form */}
-      <form
-        onSubmit={handleSync}
-        style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap',
-                 marginBottom: 24, background: '#fefce8', padding: 16, borderRadius: 8,
-                 border: '1px solid #fde68a' }}
-      >
-        <div style={{ flex: '0 0 auto' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>SYNC KLOOK CALENDAR</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input
-              required placeholder="SKU ID"
-              value={syncForm.sku_id}
-              onChange={e => setSyncForm(f => ({ ...f, sku_id: e.target.value }))}
-              style={{ width: 130, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
-            />
-            <input
-              placeholder="Tên sản phẩm (vd: Nha Trang → Hội An)"
-              value={syncForm.product_name}
-              onChange={e => setSyncForm(f => ({ ...f, product_name: e.target.value }))}
-              style={{ width: 240, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
-            />
-            {filterSku && syncForm.product_name && (
-              <button
-                type="button"
-                onClick={handleRename}
-                disabled={renaming}
-                title={`Áp dụng tên này cho tất cả ${slots.length} slot của SKU ${filterSku}`}
-                style={{ padding: '7px 14px', background: '#fff', color: '#92400e',
-                         border: '1px solid #fbbf24', borderRadius: 4, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
-              >
-                {renaming ? 'Updating…' : `Apply to all ${slots.length} slots`}
-              </button>
-            )}
-            {renameMsg && (
-              <span style={{ fontSize: 12, color: renameMsg.startsWith('Error') ? '#dc2626' : '#16a34a' }}>
-                {renameMsg}
-              </span>
-            )}
-            <input
-              placeholder="Activity ID (optional)"
-              value={syncForm.activity_id}
-              onChange={e => setSyncForm(f => ({ ...f, activity_id: e.target.value }))}
-              style={{ width: 130, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
-            />
-            <input
-              type="date" value={syncForm.start_date}
-              onChange={e => setSyncForm(f => ({ ...f, start_date: e.target.value }))}
-              style={{ padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
-            />
-            <span style={{ color: '#6b7280' }}>→</span>
-            <input
-              type="date" value={syncForm.end_date}
-              onChange={e => setSyncForm(f => ({ ...f, end_date: e.target.value }))}
-              style={{ padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
-            />
-            <button
-              type="submit" disabled={syncing}
-              style={{ padding: '7px 18px', background: '#d97706', color: '#fff',
-                       border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-            >
-              {syncing ? 'Queuing…' : 'Sync Calendar'}
-            </button>
-          </div>
-        </div>
-        {syncResult && (
-          <p style={{ width: '100%', margin: 0, fontSize: 13,
-                      color: syncResult.type === 'ok' ? '#92400e' : '#dc2626' }}>
-            {syncResult.message}
-          </p>
+      {/* Page header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 18 }}>Klook Calendar</h2>
+        {activeSku && (
+          <span style={{ fontSize: 13, color: '#6b7280' }}>
+            SKU <strong>{activeSku.sku_id}</strong>
+            {activeSku.product_name && <> · {activeSku.product_name}</>}
+            {' · '}{slots.length} slots ({activeCount} active, {inactiveCount} inactive)
+          </span>
         )}
-      </form>
+      </div>
 
-      {/* Filter bar */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-        <span style={{ fontSize: 13, color: '#6b7280' }}>Filter by SKU:</span>
-        <input
-          placeholder="SKU ID (blank = all)"
-          value={filterSku}
-          onChange={e => setFilterSku(e.target.value)}
-          style={{ width: 160, padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 13 }}
-        />
-        <span style={{ fontSize: 12, color: '#9ca3af' }}>{slots.length} timeslot{slots.length !== 1 ? 's' : ''}</span>
+      {/* SKU selector */}
+      <div style={{ marginBottom: 20, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 10 }}>
+          {knownSkus.length > 0 ? 'SELECT SKU' : 'NO SKUs SYNCED YET'}
+        </div>
+
+        {knownSkus.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            {knownSkus.map(sku => {
+              const isActive = activeSku?.sku_id === sku.sku_id;
+              return (
+                <button
+                  key={sku.sku_id}
+                  onClick={() => selectSku(sku)}
+                  style={{
+                    padding: '6px 14px',
+                    border: isActive ? '2px solid #d97706' : '1px solid #fde68a',
+                    borderRadius: 6,
+                    background: isActive ? '#fef3c7' : '#fff',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#92400e' }}>
+                    {sku.product_name || `SKU ${sku.sku_id}`}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#b45309', marginTop: 2 }}>
+                    {sku.sku_id} · {sku.slot_count} slots
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Sync form — only show when a SKU is selected or being entered */}
+        <form onSubmit={handleSync} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            required
+            placeholder="SKU ID"
+            value={skuId}
+            onChange={e => { setSkuId(e.target.value); setActiveSku(null); setSlots([]); }}
+            style={{ width: 150, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
+          />
+          <input
+            type="date" value={startDate}
+            onChange={e => setStartDate(e.target.value)}
+            style={{ padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
+          />
+          <span style={{ color: '#6b7280' }}>→</span>
+          <input
+            type="date" value={endDate}
+            onChange={e => setEndDate(e.target.value)}
+            style={{ padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
+          />
+          <button
+            type="submit" disabled={syncing || !skuId}
+            style={{ padding: '7px 18px', background: skuId ? '#d97706' : '#d1d5db',
+                     color: '#fff', border: 'none', borderRadius: 4,
+                     cursor: skuId ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 600 }}
+          >
+            {syncing ? 'Queuing…' : 'Sync Calendar'}
+          </button>
+          {syncMsg && (
+            <span style={{ fontSize: 12, color: syncMsg.ok ? '#16a34a' : '#dc2626' }}>
+              {syncMsg.text}
+            </span>
+          )}
+        </form>
       </div>
 
       {/* Calendar table */}
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th style={th}>Product</th>
-            <th style={th}>Start Time</th>
-            <th style={th}>SKU</th>
-            <th style={th}>Status</th>
-            <th style={th}>Inventory</th>
-            <th style={th}>Booked</th>
-            <th style={th}>Price (VND)</th>
-            <th style={th}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {slots.map(slot => {
-            const meta      = slot.platform_data || {};
-            const published = meta.published ?? meta.publish_status === 'published';
-            const price     = meta.price;
-            const retail    = price?.retail_price ?? price?.retailPrice;
-            return (
-              <tr key={slot.id} style={{ borderBottom: '1px solid #e5e7eb', background: published ? '#fff' : '#f9fafb' }}>
-                <td style={td}>
-                  {meta.product_name
-                    ? <span style={{ fontWeight: 600, color: '#374151' }}>{meta.product_name}</span>
-                    : <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>}
-                </td>
-                <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                  <strong>{meta.start_time || '—'}</strong>
-                </td>
-                <td style={{ ...td, color: '#6b7280', fontSize: 12 }}>{meta.sku_id || '—'}</td>
-                <td style={td}>
-                  <span style={{
-                    display: 'inline-block',
-                    padding: '2px 8px', borderRadius: 12,
-                    fontSize: 12, fontWeight: 600,
-                    background: published ? '#dcfce7' : '#f3f4f6',
-                    color: published ? '#16a34a' : '#6b7280',
+      {!activeSku && knownSkus.length > 0 && (
+        <div style={{ textAlign: 'center', padding: '40px 0', color: '#9ca3af', fontSize: 14 }}>
+          Select a SKU above to view its calendar.
+        </div>
+      )}
+
+      {(activeSku || slots.length > 0) && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 650 }}>
+            <thead>
+              <tr>
+                <th style={th}>Start Time</th>
+                <th style={th}>Status</th>
+                <th style={th}>Inventory</th>
+                <th style={th}>Booked</th>
+                <th style={th}>Price (VND)</th>
+                <th style={th}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {slots.map(slot => {
+                const meta      = slot.platform_data || {};
+                const published = meta.published ?? meta.publish_status === 'published';
+                const price     = meta.price;
+                const retail    = price?.retail_price ?? price?.retailPrice;
+                return (
+                  <tr key={slot.id} style={{
+                    borderBottom: '1px solid #e5e7eb',
+                    background: published ? '#fff' : '#fafafa',
+                    opacity: published ? 1 : 0.7,
                   }}>
-                    {published ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td style={td}>{meta.inv_quantity ?? '—'}</td>
-                <td style={td}>{meta.sales ?? '—'}</td>
-                <td style={{ ...td, fontSize: 13 }}>
-                  {retail ? retail.toLocaleString() : '—'}
-                </td>
-                <td style={td}>
-                  {actionMsg[slot.id] ? (
-                    <span style={{ fontSize: 12, color: '#6b7280' }}>{actionMsg[slot.id]}</span>
-                  ) : (
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {!published && (
+                    <td style={{ ...td, whiteSpace: 'nowrap', fontWeight: 600 }}>
+                      {meta.start_time || '—'}
+                    </td>
+                    <td style={td}>
+                      <span style={{
+                        display: 'inline-block', padding: '2px 10px', borderRadius: 12,
+                        fontSize: 12, fontWeight: 600,
+                        background: published ? '#dcfce7' : '#f3f4f6',
+                        color:      published ? '#16a34a' : '#6b7280',
+                      }}>
+                        {published ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td style={{ ...td, textAlign: 'center' }}>{meta.inv_quantity ?? '—'}</td>
+                    <td style={{ ...td, textAlign: 'center', fontWeight: (meta.sales ?? 0) > 0 ? 600 : 400 }}>
+                      {meta.sales ?? '—'}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {retail ? retail.toLocaleString('vi-VN') : '—'}
+                    </td>
+                    <td style={td}>
+                      {actionMsg[slot.id] ? (
+                        <span style={{ fontSize: 12, color: '#6b7280' }}>{actionMsg[slot.id]}</span>
+                      ) : published ? (
+                        <button
+                          onClick={() => handleToggle(slot, false)}
+                          style={{ padding: '4px 12px', fontSize: 12, background: '#fef2f2',
+                                   color: '#dc2626', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          Deactivate
+                        </button>
+                      ) : (
                         <button
                           onClick={() => handleToggle(slot, true)}
                           style={{ padding: '4px 12px', fontSize: 12, background: '#dcfce7',
@@ -307,32 +260,21 @@ export default function Klook() {
                           Activate
                         </button>
                       )}
-                      {published && (
-                        <button
-                          onClick={() => handleToggle(slot, false)}
-                          style={{ padding: '4px 12px', fontSize: 12, background: '#fef2f2',
-                                   color: '#dc2626', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' }}
-                        >
-                          Deactivate
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-          {slots.length === 0 && (
-            <tr>
-              <td colSpan={8} style={{ ...td, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
-                {knownSkus.length > 0
-                  ? 'Click a SKU chip above to load its calendar.'
-                  : 'No calendar data yet — enter a SKU ID and click Sync Calendar.'}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+                    </td>
+                  </tr>
+                );
+              })}
+              {slots.length === 0 && activeSku && (
+                <tr>
+                  <td colSpan={6} style={{ ...td, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
+                    No slots loaded — click Sync Calendar to fetch from Klook.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,15 +8,16 @@ router.get('/skus', async (req, res) => {
     if (!platform.length) return res.json([]);
 
     const { rows } = await pool.query(
-      `SELECT DISTINCT
-         pl.platform_data->>'sku_id'       AS sku_id,
-         pl.platform_data->>'activity_id'  AS activity_id,
-         MAX(pl.last_synced_at)            AS last_synced_at,
-         COUNT(*)::int                     AS slot_count
+      `SELECT
+         pl.platform_data->>'sku_id'                                          AS sku_id,
+         MAX(pl.platform_data->>'activity_id')                                AS activity_id,
+         MAX(pl.platform_data->>'product_name')                               AS product_name,
+         MAX(pl.last_synced_at)                                               AS last_synced_at,
+         COUNT(*)::int                                                         AS slot_count
        FROM platform_listings pl
        WHERE pl.platform_id = $1
          AND pl.platform_data->>'sku_id' IS NOT NULL
-       GROUP BY pl.platform_data->>'sku_id', pl.platform_data->>'activity_id'
+       GROUP BY pl.platform_data->>'sku_id'
        ORDER BY MAX(pl.last_synced_at) DESC`,
       [platform[0].id]
     );
