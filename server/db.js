@@ -39,6 +39,13 @@ async function init() {
       UNIQUE(product_id, platform_id)
     );
 
+    CREATE TABLE IF NOT EXISTS klook_activities (
+      id          SERIAL PRIMARY KEY,
+      activity_id VARCHAR(50)  NOT NULL UNIQUE,
+      name        VARCHAR(255),
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS jobs (
       id           SERIAL PRIMARY KEY,
       type         VARCHAR(100) NOT NULL,

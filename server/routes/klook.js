@@ -1,6 +1,71 @@
 const router = require('express').Router();
 const { pool } = require('../db');
 
+// ── Activity ID management ────────────────────────────────────────────────────
+
+router.get('/activities', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM klook_activities ORDER BY created_at ASC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/activities', async (req, res) => {
+  const { activity_id, name } = req.body;
+  if (!activity_id) return res.status(400).json({ error: 'activity_id required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO klook_activities (activity_id, name)
+       VALUES ($1, $2)
+       ON CONFLICT (activity_id) DO UPDATE SET name = COALESCE($2, klook_activities.name)
+       RETURNING *`,
+      [String(activity_id).trim(), name || null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/activities/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM klook_activities WHERE id=$1', [req.params.id]);
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Enqueue one klook_sync_activity job per stored activity
+router.post('/sync-all', async (req, res) => {
+  const { start_date, end_date } = req.body;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='klook'");
+    if (!platform.length) return res.status(404).json({ error: 'klook platform not found' });
+
+    const { rows: activities } = await pool.query('SELECT * FROM klook_activities');
+    if (!activities.length) return res.status(400).json({ error: 'No activities stored. Add activity IDs first.' });
+
+    const jobs = [];
+    for (const act of activities) {
+      const { rows: job } = await pool.query(
+        `INSERT INTO jobs (type, platform_id, payload, status)
+         VALUES ('klook_sync_activity', $1, $2, 'pending') RETURNING *`,
+        [platform[0].id, JSON.stringify({ activity_id: act.activity_id, activity_name: act.name, start_date, end_date })]
+      );
+      jobs.push(job[0]);
+    }
+    res.status(201).json({ queued: jobs.length, jobs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Return distinct SKU IDs already stored in the DB ─────────────────────────
+
 // Return distinct SKU IDs already stored in the DB
 router.get('/skus', async (req, res) => {
   try {

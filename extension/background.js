@@ -99,6 +99,8 @@ async function executeJob(job) {
     if (job.type === 'sync_trips') {
       const { start_date, end_date } = job.payload;
       result = await syncSeatosTrips(start_date, end_date);
+    } else if (job.type === 'klook_sync_activity') {
+      result = await executeKlookSyncActivity(job.payload);
     } else if (job.type === 'klook_sync_calendar') {
       result = await executeKlookSyncCalendar(job.payload);
     } else if (job.type === 'klook_update_schedule') {
@@ -181,6 +183,41 @@ async function klookFetch(url, options = {}) {
   const json = await res.json();
   if (!json.success) throw new Error(`Klook API error: ${json.error?.message || 'unknown'}`);
   return json;
+}
+
+async function executeKlookSyncActivity({ activity_id, activity_name, start_date, end_date }) {
+  const url = `${KLOOK_BASE}/v1/productadminbffsrv/merchant/package_service/get_activity_packages_info_v2?activity_id=${activity_id}&language=en_US&page_from=merchant`;
+  const json = await klookFetch(url);
+
+  // Try every known field path for the package list
+  const list =
+    json?.result?.packages     ??
+    json?.result?.package_list ??
+    json?.result?.sku_list     ??
+    json?.result?.skus         ??
+    json?.data?.packages       ??
+    json?.packages             ??
+    [];
+
+  if (!Array.isArray(list) || list.length === 0) {
+    // Store raw response for debugging
+    await chrome.storage.local.set({ klookPackagesDebug: JSON.stringify(json).slice(0, 3000) });
+    throw new Error(`No packages found for activity ${activity_id}. Stored raw response in klookPackagesDebug.`);
+  }
+
+  const results = [];
+  for (const pkg of list) {
+    const skuId = pkg.sku_id ?? pkg.package_id ?? pkg.id;
+    const title = pkg.title  ?? pkg.name       ?? pkg.package_name ?? activity_name ?? null;
+    if (!skuId) continue;
+    try {
+      const r = await executeKlookSyncCalendar({ sku_id: skuId, activity_id, start_date, end_date, product_name: title });
+      results.push({ sku_id: skuId, title, ok: true, ...r });
+    } catch (err) {
+      results.push({ sku_id: skuId, title, ok: false, error: err.message });
+    }
+  }
+  return { activity_id, packages_found: list.length, synced: results.filter(r => r.ok).length, results };
 }
 
 async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_date, product_name: providedName }) {
