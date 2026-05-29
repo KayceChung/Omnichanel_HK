@@ -26,6 +26,8 @@ export default function Klook() {
   const [customTo,   setCTo]     = useState(inDays(6));
   const [filter,    setFilter]   = useState('all'); // 'all' | 'active' | 'inactive'
   const [msgs,      setMsgs]     = useState({});    // slot.id → message string
+  const [inlineRename, setInlineRename] = useState(null); // sku_id being renamed inline
+  const [inlineVal,    setInlineVal]    = useState('');
 
   // ── Settings panel ──────────────────────────────────────────────────────────
   const [open,       setOpen]     = useState(false);
@@ -112,6 +114,17 @@ export default function Klook() {
     } catch {
       setMsgs(m => ({ ...m, [slot.id]: 'lỗi' }));
     }
+  }
+
+  async function saveInlineName(sku_id) {
+    const name = inlineVal.trim();
+    if (!name) { setInlineRename(null); return; }
+    await fetch(`${API}/api/klook/set-product-name`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sku_id, product_name: name }),
+    });
+    setInlineRename(null); setInlineVal('');
+    loadGoiVe(); loadSlots(dateFrom, dateTo);
   }
 
   async function addRoute(e) {
@@ -296,16 +309,25 @@ export default function Klook() {
                   const meta      = slot.platform_data || {};
                   const published = isPublished(slot);
                   const retail    = meta.price?.retail_price ?? meta.price?.retailPrice;
-                  const tripName  = slot.activity_name || `Activity ${meta.activity_id || ''}`;
-                  const cabin     = meta.product_name || `SKU ${meta.sku_id}`;
-                  const msg       = msgs[slot.id];
                   const sales     = meta.sales ?? 0;
                   const inv       = meta.inv_quantity ?? '—';
+                  const msg       = msgs[slot.id];
+
+                  // Trip name: use activity_name from JOIN, fallback to activity_id
+                  const tripName = slot.activity_name
+                    || (meta.activity_id ? `Tuyến #${meta.activity_id}` : null)
+                    || '—';
+                  const tripMissing = !slot.activity_name;
+
+                  // Cabin name: use product_name, null means needs naming
+                  const cabinName  = meta.product_name || null;
+                  const skuId      = meta.sku_id;
+                  const isRenamingThis = inlineRename === skuId;
 
                   return (
                     <div key={slot.id} style={{
                       display: 'grid',
-                      gridTemplateColumns: '52px 1fr 80px 90px',
+                      gridTemplateColumns: '52px 1fr auto 90px',
                       gap: 12,
                       alignItems: 'center',
                       padding: '11px 16px',
@@ -321,16 +343,47 @@ export default function Klook() {
 
                       {/* Route + Cabin */}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {/* Trip name */}
+                        <div style={{ fontSize: 13, fontWeight: 600, color: tripMissing ? '#9ca3af' : '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {tripName}
                         </div>
-                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                          {cabin}
-                        </div>
+
+                        {/* Cabin — inline rename if not set */}
+                        {isRenamingThis ? (
+                          <form onSubmit={e => { e.preventDefault(); saveInlineName(skuId); }}
+                            style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+                            <input autoFocus value={inlineVal} onChange={e => setInlineVal(e.target.value)}
+                              placeholder="vd: Upper Cabin / Lower Cabin"
+                              style={{ width: 200, padding: '2px 6px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, outline: 'none' }} />
+                            <button type="submit"
+                              style={{ padding: '2px 8px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>
+                              ✓
+                            </button>
+                            <button type="button" onClick={() => setInlineRename(null)}
+                              style={{ padding: '2px 6px', background: 'none', border: 'none', fontSize: 13, cursor: 'pointer', color: '#9ca3af' }}>
+                              ✕
+                            </button>
+                          </form>
+                        ) : cabinName ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                            <span style={{ fontSize: 11, color: '#9ca3af' }}>{cabinName}</span>
+                            <button onClick={() => { setInlineRename(skuId); setInlineVal(cabinName); }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', fontSize: 11, padding: 0, lineHeight: 1 }}
+                              title="Đổi tên cabin">✎</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => { setInlineRename(skuId); setInlineVal(''); }}
+                            style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 4,
+                                     background: 'none', border: '1px dashed #fbbf24', borderRadius: 4,
+                                     padding: '1px 7px', cursor: 'pointer', color: '#92400e', fontSize: 11 }}>
+                            <span style={{ fontSize: 10 }}>✎</span>
+                            Đặt tên cabin · SKU {skuId}
+                          </button>
+                        )}
                       </div>
 
                       {/* Sales / Inventory */}
-                      <div style={{ textAlign: 'right', fontSize: 12, lineHeight: 1.5 }}>
+                      <div style={{ textAlign: 'right', fontSize: 12, lineHeight: 1.5, whiteSpace: 'nowrap' }}>
                         <span style={{ fontWeight: sales > 0 ? 700 : 400, color: sales > 0 ? '#111' : '#d1d5db' }}>
                           {sales}
                         </span>
@@ -353,20 +406,12 @@ export default function Klook() {
                           <span style={{ fontSize: 11, color: '#9ca3af' }}>{msg}</span>
                         ) : published ? (
                           <button onClick={() => toggle(slot, false)}
-                            style={{
-                              padding: '4px 14px', fontSize: 12, fontWeight: 600,
-                              background: '#fee2e2', color: '#dc2626',
-                              border: 'none', borderRadius: 6, cursor: 'pointer',
-                            }}>
+                            style={{ padding: '4px 14px', fontSize: 12, fontWeight: 600, background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
                             Tắt
                           </button>
                         ) : (
                           <button onClick={() => toggle(slot, true)}
-                            style={{
-                              padding: '4px 14px', fontSize: 12, fontWeight: 600,
-                              background: '#dcfce7', color: '#16a34a',
-                              border: 'none', borderRadius: 6, cursor: 'pointer',
-                            }}>
+                            style={{ padding: '4px 14px', fontSize: 12, fontWeight: 600, background: '#dcfce7', color: '#16a34a', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
                             Bật
                           </button>
                         )}

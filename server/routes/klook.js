@@ -154,7 +154,7 @@ router.get('/calendar', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT p.id, p.title, p.status,
               pl.external_id, pl.platform_data, pl.last_synced_at,
-              ka.name AS activity_name
+              COALESCE(ka.name, ka.activity_id) AS activity_name
        FROM platform_listings pl
        JOIN products p ON p.id = pl.product_id
        LEFT JOIN klook_activities ka
