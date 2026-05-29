@@ -113,7 +113,6 @@ async function syncSeatosTrips(startDate, endDate) {
       Accept:        'application/json',
       Authorization: `Bearer ${jwt}`,
     },
-    credentials: 'include',
   });
 
   if (!res.ok) {
