@@ -34,11 +34,28 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'klookSkuDetected') {
     chrome.storage.local.get('klookSkus', data => {
       const skus = data.klookSkus || [];
-      if (!skus.some(s => s.sku_id === msg.sku_id)) {
+      const existing = skus.find(s => s.sku_id === msg.sku_id);
+      if (!existing) {
         skus.unshift({ sku_id: msg.sku_id, activity_id: msg.activity_id, detected_at: Date.now() });
         if (skus.length > 20) skus.length = 20;
-        chrome.storage.local.set({ klookSkus: skus });
+      } else if (msg.activity_id && !existing.activity_id) {
+        existing.activity_id = msg.activity_id;
       }
+      chrome.storage.local.set({ klookSkus: skus });
+    });
+    return false;
+  }
+  if (msg.type === 'klookSkuNamed') {
+    chrome.storage.local.get('klookSkus', data => {
+      const skus = data.klookSkus || [];
+      const existing = skus.find(s => s.sku_id === msg.sku_id);
+      if (existing) {
+        existing.title = msg.title;
+      } else {
+        skus.unshift({ sku_id: msg.sku_id, title: msg.title, detected_at: Date.now() });
+        if (skus.length > 20) skus.length = 20;
+      }
+      chrome.storage.local.set({ klookSkus: skus });
     });
     return false;
   }
@@ -166,7 +183,15 @@ async function klookFetch(url, options = {}) {
   return json;
 }
 
-async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_date, product_name }) {
+async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_date, product_name: providedName }) {
+  // Auto-fill product name from locally stored SKU names if not provided
+  const storedName = await new Promise(resolve => {
+    chrome.storage.local.get('klookSkus', data => {
+      const entry = (data.klookSkus || []).find(s => String(s.sku_id) === String(sku_id));
+      resolve(entry?.title || null);
+    });
+  });
+  const product_name = providedName || storedName || null;
   const start = `${start_date} 00:00:00`;
   const end   = `${end_date} 23:59:59`;
   const url   = `${KLOOK_BASE}/v1/productadminbffsrv/merchant/calendar_service/get_calendar_by_sku_id?sku_id=${sku_id}&start_time=${encodeURIComponent(start)}&end_time=${encodeURIComponent(end)}`;
