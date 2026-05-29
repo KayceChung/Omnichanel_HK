@@ -80,6 +80,25 @@ router.post('/:id/complete', async (req, res) => {
   }
 });
 
+// Recent jobs of a given type (for progress tracking)
+router.get('/recent', async (req, res) => {
+  const { type, after } = req.query;
+  if (!type) return res.status(400).json({ error: 'type required' });
+  try {
+    const afterTs = after ? new Date(Number(after)) : new Date(Date.now() - 30 * 60 * 1000);
+    const { rows } = await pool.query(
+      `SELECT id, type, status, error, result, created_at, completed_at
+       FROM jobs
+       WHERE type = $1 AND created_at >= $2
+       ORDER BY created_at DESC LIMIT 50`,
+      [type, afterTs]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Dashboard job list
 router.get('/', async (req, res) => {
   try {
