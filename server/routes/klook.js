@@ -54,6 +54,43 @@ router.get('/calendar', async (req, res) => {
   }
 });
 
+// Bulk-set product_name for all slots of a given sku_id (no re-sync needed)
+router.post('/set-product-name', async (req, res) => {
+  const { sku_id, product_name } = req.body;
+  if (!sku_id || !product_name) {
+    return res.status(400).json({ error: 'sku_id and product_name required' });
+  }
+  try {
+    const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='klook'");
+    if (!platform.length) return res.status(404).json({ error: 'klook platform not found' });
+
+    // Update platform_data.product_name for every listing of this SKU
+    const { rowCount } = await pool.query(
+      `UPDATE platform_listings
+       SET platform_data = platform_data || jsonb_build_object('product_name', $1::text),
+           updated_at = NOW()
+       WHERE platform_id = $2
+         AND platform_data->>'sku_id' = $3`,
+      [product_name, platform[0].id, String(sku_id)]
+    );
+
+    // Also update the product title for those rows
+    await pool.query(
+      `UPDATE products p
+       SET title = $1, updated_at = NOW()
+       FROM platform_listings pl
+       WHERE pl.product_id = p.id
+         AND pl.platform_id = $2
+         AND pl.platform_data->>'sku_id' = $3`,
+      [product_name, platform[0].id, String(sku_id)]
+    );
+
+    res.json({ updated: rowCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Enqueue a job for the extension to read Klook calendar
 router.post('/sync-calendar', async (req, res) => {
   const { sku_id, activity_id, start_date, end_date, product_name } = req.body;

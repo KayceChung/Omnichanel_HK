@@ -20,6 +20,8 @@ export default function Klook() {
   const [syncing,    setSyncing]    = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   const [actionMsg,  setActionMsg]  = useState({});
+  const [renaming,   setRenaming]   = useState(false);
+  const [renameMsg,  setRenameMsg]  = useState('');
 
   const reload = useCallback(async (skuId) => {
     const qs = skuId ? `?sku_id=${encodeURIComponent(skuId)}` : '';
@@ -40,6 +42,27 @@ export default function Klook() {
   function selectSku(sku) {
     setSyncForm(f => ({ ...f, sku_id: sku.sku_id, activity_id: sku.activity_id || '' }));
     setFilterSku(sku.sku_id);
+  }
+
+  async function handleRename() {
+    if (!filterSku || !syncForm.product_name) return;
+    setRenaming(true);
+    setRenameMsg('');
+    try {
+      const res = await fetch(`${API}/api/klook/set-product-name`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ sku_id: filterSku, product_name: syncForm.product_name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setRenameMsg(`Updated ${data.updated} slots`);
+      reload(filterSku);
+    } catch (err) {
+      setRenameMsg(`Error: ${err.message}`);
+    } finally {
+      setRenaming(false);
+    }
   }
 
   async function handleSync(e) {
@@ -160,6 +183,23 @@ export default function Klook() {
               onChange={e => setSyncForm(f => ({ ...f, product_name: e.target.value }))}
               style={{ width: 240, padding: '7px 10px', border: '1px solid #fbbf24', borderRadius: 4, fontSize: 13 }}
             />
+            {filterSku && syncForm.product_name && (
+              <button
+                type="button"
+                onClick={handleRename}
+                disabled={renaming}
+                title={`Áp dụng tên này cho tất cả ${slots.length} slot của SKU ${filterSku}`}
+                style={{ padding: '7px 14px', background: '#fff', color: '#92400e',
+                         border: '1px solid #fbbf24', borderRadius: 4, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
+              >
+                {renaming ? 'Updating…' : `Apply to all ${slots.length} slots`}
+              </button>
+            )}
+            {renameMsg && (
+              <span style={{ fontSize: 12, color: renameMsg.startsWith('Error') ? '#dc2626' : '#16a34a' }}>
+                {renameMsg}
+              </span>
+            )}
             <input
               placeholder="Activity ID (optional)"
               value={syncForm.activity_id}
