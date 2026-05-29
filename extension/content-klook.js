@@ -43,11 +43,21 @@ function scanDomForActivities() {
   return Array.from(found.entries()).map(([activity_id, name]) => ({ activity_id, name }));
 }
 
+function safeSend(msg) {
+  try {
+    if (chrome.runtime?.id) {
+      chrome.runtime.sendMessage(msg);
+    } else {
+      observer.disconnect(); // extension reloaded, stop observing
+    }
+  } catch (_) {
+    observer.disconnect();
+  }
+}
+
 function reportActivities() {
   const activities = scanDomForActivities();
-  if (activities.length > 0) {
-    chrome.runtime.sendMessage({ type: 'klookActivitiesFound', activities });
-  }
+  if (activities.length > 0) safeSend({ type: 'klookActivitiesFound', activities });
 }
 
 // Run on load, then watch for dynamically rendered content
@@ -69,23 +79,12 @@ observer.observe(document.body || document.documentElement, { childList: true, s
 window.addEventListener('message', event => {
   if (event.source !== window) return;
   if (event.data?.type === 'KLOOK_SKU_DETECTED') {
-    chrome.runtime.sendMessage({
-      type:        'klookSkuDetected',
-      sku_id:      event.data.sku_id,
-      activity_id: event.data.activity_id,
-    });
+    safeSend({ type: 'klookSkuDetected', sku_id: event.data.sku_id, activity_id: event.data.activity_id });
   }
   if (event.data?.type === 'KLOOK_SKU_NAMED') {
-    chrome.runtime.sendMessage({
-      type:   'klookSkuNamed',
-      sku_id: event.data.sku_id,
-      title:  event.data.title,
-    });
+    safeSend({ type: 'klookSkuNamed', sku_id: event.data.sku_id, title: event.data.title });
   }
   if (event.data?.type === 'KLOOK_ACTIVITIES_FOUND') {
-    chrome.runtime.sendMessage({
-      type:       'klookActivitiesFound',
-      activities: event.data.activities,
-    });
+    safeSend({ type: 'klookActivitiesFound', activities: event.data.activities });
   }
 });
