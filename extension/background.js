@@ -45,6 +45,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     });
     return false;
   }
+  if (msg.type === 'klookActivitiesFound') {
+    // Auto-save all detected activity IDs to the server
+    fetch(`${API_URL}/api/klook/activities/bulk`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ activities: msg.activities }),
+    }).catch(() => {});
+    return false;
+  }
   if (msg.type === 'klookSkuNamed') {
     chrome.storage.local.get('klookSkus', data => {
       const skus = data.klookSkus || [];

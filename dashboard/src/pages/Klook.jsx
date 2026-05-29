@@ -35,6 +35,12 @@ export default function Klook() {
     if (res.ok) setActivities(await res.json());
   }, []);
 
+  // Auto-refresh activities every 5s so newly detected ones appear immediately
+  useEffect(() => {
+    const t = setInterval(reloadActivities, 5000);
+    return () => clearInterval(t);
+  }, [reloadActivities]);
+
   const reloadSkus = useCallback(async () => {
     const res = await fetch(`${API}/api/klook/skus`);
     if (res.ok) setKnownSkus(await res.json());
@@ -203,9 +209,10 @@ export default function Klook() {
                 </div>
               ))}
               {activities.length === 0 && (
-                <span style={{ fontSize: 13, color: '#9ca3af' }}>
-                  Thêm activity ID từ URL Klook để dùng Sync All
-                </span>
+                <div style={{ fontSize: 13, color: '#6b7280', padding: '6px 0' }}>
+                  <strong>Chưa có activity nào.</strong>{' '}
+                  Mở tab <code style={{ background: '#f3f4f6', padding: '1px 5px', borderRadius: 3 }}>merchant.klook.com</code> → trang Activity Management → extension sẽ tự phát hiện và điền vào đây.
+                </div>
               )}
             </div>
           </div>

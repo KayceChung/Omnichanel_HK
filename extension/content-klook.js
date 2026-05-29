@@ -21,4 +21,10 @@ window.addEventListener('message', event => {
       title:  event.data.title,
     });
   }
+  if (event.data?.type === 'KLOOK_ACTIVITIES_FOUND') {
+    chrome.runtime.sendMessage({
+      type:       'klookActivitiesFound',
+      activities: event.data.activities,
+    });
+  }
 });

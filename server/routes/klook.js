@@ -29,6 +29,31 @@ router.post('/activities', async (req, res) => {
   }
 });
 
+// Bulk upsert activities detected by the extension
+router.post('/activities/bulk', async (req, res) => {
+  const { activities } = req.body;
+  if (!Array.isArray(activities) || activities.length === 0) {
+    return res.status(400).json({ error: 'activities array required' });
+  }
+  try {
+    let upserted = 0;
+    for (const { activity_id, name } of activities) {
+      if (!activity_id) continue;
+      await pool.query(
+        `INSERT INTO klook_activities (activity_id, name)
+         VALUES ($1, $2)
+         ON CONFLICT (activity_id) DO UPDATE
+           SET name = COALESCE($2, klook_activities.name)`,
+        [String(activity_id).trim(), name || null]
+      );
+      upserted++;
+    }
+    res.json({ upserted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/activities/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM klook_activities WHERE id=$1', [req.params.id]);
