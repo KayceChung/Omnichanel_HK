@@ -38,6 +38,8 @@ export default function Klook() {
   const [syncing,     setSyncing]    = useState(false);
   const [syncJobs,    setSyncJobs]   = useState([]);   // recent sync_activity jobs
   const syncBatchRef  = useRef(null); // timestamp when last sync-all was triggered
+  const [debugData,   setDebugData]  = useState(null);
+  const [showDebug,   setShowDebug]  = useState(false);
 
   // ── Data loaders ──────────────────────────────────────────────────────────
 
@@ -72,7 +74,12 @@ export default function Klook() {
     }
   }, [activeGoi, loadGoiVe, loadKhoangGio]);
 
-  useEffect(() => { loadTuyen(); loadGoiVe(); }, [loadTuyen, loadGoiVe]);
+  const loadDebug = useCallback(async () => {
+    const r = await fetch(`${API}/api/klook/debug-packages`);
+    if (r.ok) setDebugData(await r.json());
+  }, []);
+
+  useEffect(() => { loadTuyen(); loadGoiVe(); loadDebug(); }, [loadTuyen, loadGoiVe, loadDebug]);
   useEffect(() => { const t = setInterval(loadTuyen, 5000); return () => clearInterval(t); }, [loadTuyen]);
 
   // Poll jobs while any are running
@@ -394,6 +401,26 @@ export default function Klook() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Debug panel — shows raw packages API response for field-name analysis */}
+      {debugData && (
+        <div style={{ marginTop: 20, border: '1px solid #fde68a', borderRadius: 8, overflow: 'hidden' }}>
+          <button onClick={() => setShowDebug(v => !v)}
+            style={{ width: '100%', padding: '10px 14px', background: '#fef9c3', border: 'none',
+                     cursor: 'pointer', textAlign: 'left', fontSize: 13, color: '#92400e', fontWeight: 600 }}>
+            {showDebug ? '▼' : '▶'} Debug: Packages API response (nhận lúc {debugData.received_at})
+            <span style={{ fontWeight: 400, marginLeft: 8, fontSize: 12 }}>
+              — dùng để phân tích field name
+            </span>
+          </button>
+          {showDebug && (
+            <pre style={{ margin: 0, padding: 14, background: '#fffbeb', fontSize: 11,
+                          overflow: 'auto', maxHeight: 400, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {JSON.stringify(debugData.body?.response ?? debugData.body, null, 2)}
+            </pre>
+          )}
         </div>
       )}
 

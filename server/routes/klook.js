@@ -1,6 +1,19 @@
 const router = require('express').Router();
 const { pool } = require('../db');
 
+// ── Debug endpoint (stores raw packages API response for field-name analysis) ─
+
+let _packagesDebug = null; // in-memory, cleared on restart
+
+router.post('/debug-packages', (req, res) => {
+  _packagesDebug = { received_at: new Date().toISOString(), body: req.body };
+  res.json({ ok: true });
+});
+
+router.get('/debug-packages', (req, res) => {
+  res.json(_packagesDebug || null);
+});
+
 // ── Activity ID management ────────────────────────────────────────────────────
 
 router.get('/activities', async (req, res) => {

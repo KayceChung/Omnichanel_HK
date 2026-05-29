@@ -194,33 +194,83 @@ async function klookFetch(url, options = {}) {
   return json;
 }
 
+// Recursively find first array whose items look like packages (have an id-like field)
+function findPackageList(obj, depth = 0) {
+  if (depth > 6 || !obj) return null;
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return null;
+    const s = obj[0];
+    // Any object with a numeric-looking id field is a candidate
+    const hasId = s && typeof s === 'object' && (
+      s.sku_id !== undefined || s.skuId !== undefined ||
+      s.package_id !== undefined || s.packageId !== undefined ||
+      s.id !== undefined
+    );
+    if (hasId) return obj;
+    return null;
+  }
+  if (obj && typeof obj === 'object') {
+    for (const val of Object.values(obj)) {
+      const found = findPackageList(val, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 async function executeKlookSyncActivity({ activity_id, activity_name, start_date, end_date }) {
   const url = `${KLOOK_BASE}/v1/productadminbffsrv/merchant/package_service/get_activity_packages_info_v2?activity_id=${activity_id}&language=en_US&page_from=merchant`;
   const json = await klookFetch(url);
 
-  // Try every known field path for the package list
+  // Always send raw response to server for debugging
+  fetch(`${API_URL}/api/klook/debug-packages`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ activity_id, activity_name, response: json }),
+  }).catch(() => {});
+
+  // Try named fields first, then recursive scan
   const list =
-    json?.result?.packages     ??
-    json?.result?.package_list ??
-    json?.result?.sku_list     ??
-    json?.result?.skus         ??
-    json?.data?.packages       ??
-    json?.packages             ??
+    json?.result?.packages       ??
+    json?.result?.package_list   ??
+    json?.result?.packageList    ??
+    json?.result?.package_infos  ??
+    json?.result?.packageInfos   ??
+    json?.result?.sku_list       ??
+    json?.result?.skuList        ??
+    json?.result?.skus           ??
+    json?.data?.packages         ??
+    json?.packages               ??
+    findPackageList(json)        ??
     [];
 
   if (!Array.isArray(list) || list.length === 0) {
-    // Store raw response for debugging
-    await chrome.storage.local.set({ klookPackagesDebug: JSON.stringify(json).slice(0, 3000) });
-    throw new Error(`No packages found for activity ${activity_id}. Stored raw response in klookPackagesDebug.`);
+    // No packages found — sync calendar for this activity without a specific name
+    // using activity name as fallback so at least we get data
+    try {
+      // Try to get calendar directly using activity_id (won't have sku_id, skip)
+      console.warn(`[Klook] No packages for activity ${activity_id} — check /api/klook/debug-packages`);
+    } catch (_) {}
+    return { activity_id, packages_found: 0, synced: 0, error: 'No packages found — check debug-packages endpoint' };
   }
 
   const results = [];
   for (const pkg of list) {
-    const skuId = pkg.sku_id ?? pkg.package_id ?? pkg.id;
-    const title = pkg.title  ?? pkg.name       ?? pkg.package_name ?? activity_name ?? null;
+    const skuId =
+      pkg.sku_id      ?? pkg.skuId      ??
+      pkg.package_id  ?? pkg.packageId  ??
+      pkg.id;
+    const title =
+      pkg.title        ?? pkg.name         ??
+      pkg.package_name ?? pkg.packageName  ??
+      pkg.sku_name     ?? pkg.skuName      ??
+      activity_name    ?? null;
     if (!skuId) continue;
     try {
-      const r = await executeKlookSyncCalendar({ sku_id: skuId, activity_id, start_date, end_date, product_name: title });
+      const r = await executeKlookSyncCalendar({
+        sku_id: skuId, activity_id, start_date, end_date,
+        product_name: title,
+      });
       results.push({ sku_id: skuId, title, ok: true, ...r });
     } catch (err) {
       results.push({ sku_id: skuId, title, ok: false, error: err.message });
