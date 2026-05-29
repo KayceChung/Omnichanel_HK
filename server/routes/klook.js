@@ -158,7 +158,8 @@ router.get('/calendar', async (req, res) => {
        FROM platform_listings pl
        JOIN products p ON p.id = pl.product_id
        LEFT JOIN klook_activities ka
-         ON ka.activity_id = pl.platform_data->>'activity_id'
+         ON (pl.platform_data->>'activity_id') != ''
+        AND ka.activity_id = pl.platform_data->>'activity_id'
        ${where}
        ORDER BY pl.platform_data->>'start_time' ASC NULLS LAST`,
       params

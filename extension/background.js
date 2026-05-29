@@ -299,89 +299,82 @@ async function klookFetch(url, options = {}) {
   return json;
 }
 
-// Recursively find first array whose items look like packages (have an id-like field)
-function findPackageList(obj, depth = 0) {
-  if (depth > 6 || !obj) return null;
+// Recursively collect every object that has a sku_id field (not package_id).
+// Klook structure: activity → packages (package_id) → sku_list (sku_id + title).
+// By targeting sku_id we land at the right level where cabin names live.
+function findAllSkus(obj, depth = 0) {
+  const results = [];
+  if (depth > 8 || !obj) return results;
+
   if (Array.isArray(obj)) {
-    if (obj.length === 0) return null;
-    const s = obj[0];
-    // Any object with a numeric-looking id field is a candidate
-    const hasId = s && typeof s === 'object' && (
-      s.sku_id !== undefined || s.skuId !== undefined ||
-      s.package_id !== undefined || s.packageId !== undefined ||
-      s.id !== undefined
-    );
-    if (hasId) return obj;
-    return null;
+    for (const item of obj) results.push(...findAllSkus(item, depth + 1));
+    return results;
   }
-  if (obj && typeof obj === 'object') {
-    for (const val of Object.values(obj)) {
-      const found = findPackageList(val, depth + 1);
-      if (found) return found;
+
+  if (typeof obj === 'object') {
+    const rawId  = obj.sku_id ?? obj.skuId;
+    const rawStr = rawId !== undefined ? String(rawId) : null;
+    if (rawStr && /^\d+$/.test(rawStr)) {
+      const title =
+        obj.title        ?? obj.name         ??
+        obj.sku_name     ?? obj.skuName      ??
+        obj.package_name ?? obj.packageName  ?? null;
+      results.push({ sku_id: rawStr, title: title ? String(title) : null });
+    }
+    // Always recurse into child values
+    for (const v of Object.values(obj)) {
+      if (v && typeof v === 'object') results.push(...findAllSkus(v, depth + 1));
     }
   }
-  return null;
+
+  return results;
 }
 
 async function executeKlookSyncActivity({ activity_id, activity_name, start_date, end_date }) {
   const url = `${KLOOK_BASE}/v1/productadminbffsrv/merchant/package_service/get_activity_packages_info_v2?activity_id=${activity_id}&language=en_US&page_from=merchant`;
   const json = await klookFetch(url);
 
-  // Always send raw response to server for debugging
+  // Always save raw response for inspection
   fetch(`${API_URL}/api/klook/debug-packages`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ activity_id, activity_name, response: json }),
   }).catch(() => {});
 
-  // Try named fields first, then recursive scan
-  const list =
-    json?.result?.packages       ??
-    json?.result?.package_list   ??
-    json?.result?.packageList    ??
-    json?.result?.package_infos  ??
-    json?.result?.packageInfos   ??
-    json?.result?.sku_list       ??
-    json?.result?.skuList        ??
-    json?.result?.skus           ??
-    json?.data?.packages         ??
-    json?.packages               ??
-    findPackageList(json)        ??
-    [];
+  // Recursively find all SKU-level entries (sku_id field present at any depth)
+  const rawSkus = findAllSkus(json);
 
-  if (!Array.isArray(list) || list.length === 0) {
-    // No packages found — sync calendar for this activity without a specific name
-    // using activity name as fallback so at least we get data
-    try {
-      // Try to get calendar directly using activity_id (won't have sku_id, skip)
-      console.warn(`[Klook] No packages for activity ${activity_id} — check /api/klook/debug-packages`);
-    } catch (_) {}
-    return { activity_id, packages_found: 0, synced: 0, error: 'No packages found — check debug-packages endpoint' };
+  // Deduplicate: keep first title found per sku_id
+  const skuMap = {};
+  for (const s of rawSkus) {
+    if (!skuMap[s.sku_id]) skuMap[s.sku_id] = s;
+    else if (!skuMap[s.sku_id].title && s.title) skuMap[s.sku_id].title = s.title;
   }
+  const skus = Object.values(skuMap);
+
+  if (skus.length === 0) {
+    console.warn(`[Klook] No SKUs found for activity ${activity_id} — check /api/klook/debug-packages`);
+    return { activity_id, skus_found: 0, synced: 0, error: 'No SKUs found' };
+  }
+
+  console.log(`[Klook] Activity ${activity_id}: found ${skus.length} SKUs →`, skus.map(s => `${s.sku_id}(${s.title || '?'})`).join(', '));
 
   const results = [];
-  for (const pkg of list) {
-    const skuId =
-      pkg.sku_id      ?? pkg.skuId      ??
-      pkg.package_id  ?? pkg.packageId  ??
-      pkg.id;
-    const title =
-      pkg.title        ?? pkg.name         ??
-      pkg.package_name ?? pkg.packageName  ??
-      pkg.sku_name     ?? pkg.skuName      ??
-      activity_name    ?? null;
-    if (!skuId) continue;
+  for (const { sku_id, title } of skus) {
     try {
       const r = await executeKlookSyncCalendar({
-        sku_id: skuId, activity_id, start_date, end_date,
-        product_name: title,
+        sku_id,
+        activity_id: String(activity_id || ''),
+        start_date,
+        end_date,
+        product_name: title ?? activity_name ?? null,
       });
-      results.push({ sku_id: skuId, title, ok: true, ...r });
+      results.push({ sku_id, title, ok: true, ...r });
     } catch (err) {
-      results.push({ sku_id: skuId, title, ok: false, error: err.message });
+      results.push({ sku_id, title, ok: false, error: err.message });
     }
   }
-  return { activity_id, packages_found: list.length, synced: results.filter(r => r.ok).length, results };
+  return { activity_id, skus_found: skus.length, synced: results.filter(r => r.ok).length, results };
 }
 
 async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_date, product_name: providedName }) {

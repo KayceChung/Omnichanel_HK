@@ -21,48 +21,51 @@
     } catch (_) {}
   }
 
-  // ── Extract SKU name mapping from a packages API response ─────────────────
+  // ── Recursively collect all objects with sku_id field at any depth ──────────
+  // Mirrors findAllSkus in background.js — targets the SKU level (not package level)
+  function collectSkus(obj, depth) {
+    const out = [];
+    if (depth > 8 || !obj) return out;
+    if (Array.isArray(obj)) {
+      obj.forEach(item => out.push(...collectSkus(item, depth + 1)));
+      return out;
+    }
+    if (typeof obj === 'object') {
+      const rawId = obj.sku_id ?? obj.skuId;
+      if (rawId !== undefined && /^\d+$/.test(String(rawId))) {
+        const title = obj.title ?? obj.name ?? obj.sku_name ?? obj.skuName ?? obj.package_name ?? null;
+        out.push({ sku_id: String(rawId), title: title ? String(title) : null });
+      }
+      Object.values(obj).forEach(v => { if (v && typeof v === 'object') out.push(...collectSkus(v, depth + 1)); });
+    }
+    return out;
+  }
+
+  // ── Broadcast SKU names to background (passive capture) ───────────────────
   function extractSkuNames(data) {
     try {
-      const list =
-        data?.result?.packages     ??
-        data?.result?.package_list ??
-        data?.result?.sku_list     ??
-        data?.result?.skus         ??
-        data?.data?.packages       ??
-        data?.packages             ?? [];
-      if (!Array.isArray(list)) return;
-      list.forEach(item => {
-        const id    = item.sku_id    ?? item.package_id ?? item.id;
-        const title = item.title     ?? item.name       ?? item.package_name ?? item.sku_name;
-        if (id && title) {
-          window.postMessage({ type: 'KLOOK_SKU_NAMED', sku_id: String(id), title }, '*');
-        }
+      const skus = collectSkus(data, 0);
+      // Deduplicate
+      const seen = new Set();
+      skus.forEach(({ sku_id, title }) => {
+        if (seen.has(sku_id) || !title) return;
+        seen.add(sku_id);
+        window.postMessage({ type: 'KLOOK_SKU_NAMED', sku_id, title }, '*');
       });
     } catch (_) {}
   }
 
-  // ── Send full package list (activity → SKUs) so background can auto-sync ──
+  // ── Send full SKU list so background auto-syncs calendars ─────────────────
   function extractPackagesFull(urlStr, data) {
     try {
-      const actM       = urlStr.match(/activity_id=(\d+)/);
+      const actM        = urlStr.match(/activity_id=(\d+)/);
       const activity_id = actM?.[1] || null;
 
-      const list =
-        data?.result?.packages     ??
-        data?.result?.package_list ??
-        data?.result?.packageList  ??
-        data?.result?.sku_list     ??
-        data?.result?.skus         ??
-        data?.data?.packages       ??
-        data?.packages             ?? [];
-
-      if (!Array.isArray(list) || list.length === 0) return;
-
-      const packages = list.map(pkg => ({
-        sku_id: String(pkg.sku_id ?? pkg.skuId ?? pkg.package_id ?? pkg.packageId ?? pkg.id ?? ''),
-        name:   pkg.title ?? pkg.name ?? pkg.package_name ?? pkg.packageName ?? pkg.sku_name ?? null,
-      })).filter(p => p.sku_id);
+      const rawSkus = collectSkus(data, 0);
+      // Deduplicate
+      const skuMap = {};
+      rawSkus.forEach(s => { if (!skuMap[s.sku_id]) skuMap[s.sku_id] = s; });
+      const packages = Object.values(skuMap).filter(p => p.sku_id);
 
       if (packages.length > 0) {
         window.postMessage({ type: 'KLOOK_PACKAGES_FULL', activity_id, packages }, '*');
