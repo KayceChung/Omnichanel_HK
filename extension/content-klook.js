@@ -12,9 +12,13 @@ function safeSend(msg) {
   try {
     chrome.runtime.sendMessage(msg);
   } catch (_) {
-    _alive = false; // stop all future sends silently
+    _alive = false;
   }
 }
+
+// ── Notify background that user opened merchant.klook.com ────────────────────
+// Fires once per page load; background debounces to avoid excessive syncing
+safeSend({ type: 'klookPageOpened', url: window.location.href });
 
 // ── DOM scan: extract activity IDs from the current page ─────────────────────
 function scanDomForActivities() {
@@ -50,7 +54,6 @@ function reportActivities() {
   if (activities.length > 0) safeSend({ type: 'klookActivitiesFound', activities });
 }
 
-// Run on load, then watch for dynamically rendered content
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => setTimeout(reportActivities, 1500));
 } else {
@@ -68,10 +71,26 @@ observer.observe(document.body || document.documentElement, { childList: true, s
 // ── Forward page-interceptor messages to background ──────────────────────────
 window.addEventListener('message', event => {
   if (event.source !== window) return;
-  if (event.data?.type === 'KLOOK_SKU_DETECTED')
+  const { type } = event.data || {};
+
+  if (type === 'KLOOK_SKU_DETECTED')
     safeSend({ type: 'klookSkuDetected', sku_id: event.data.sku_id, activity_id: event.data.activity_id });
-  if (event.data?.type === 'KLOOK_SKU_NAMED')
+
+  if (type === 'KLOOK_SKU_NAMED')
     safeSend({ type: 'klookSkuNamed', sku_id: event.data.sku_id, title: event.data.title });
-  if (event.data?.type === 'KLOOK_ACTIVITIES_FOUND')
+
+  if (type === 'KLOOK_ACTIVITIES_FOUND')
     safeSend({ type: 'klookActivitiesFound', activities: event.data.activities });
+
+  // New: captured device_uuid from live request header
+  if (type === 'KLOOK_DEVICE_UUID')
+    safeSend({ type: 'klookDeviceUuid', uuid: event.data.uuid });
+
+  // New: full package list intercepted from get_activity_packages_info_v2 response
+  if (type === 'KLOOK_PACKAGES_FULL')
+    safeSend({ type: 'klookPackagesFull', activity_id: event.data.activity_id, packages: event.data.packages });
+
+  // New: full calendar intercepted from get_calendar_by_sku_id response
+  if (type === 'KLOOK_CALENDAR_FULL')
+    safeSend({ type: 'klookCalendarFull', sku_id: event.data.sku_id, activity_id: event.data.activity_id, calendar: event.data.calendar });
 });

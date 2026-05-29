@@ -1,5 +1,16 @@
 (function () {
 
+  // ── Capture device_uuid from outgoing request headers ─────────────────────
+  function captureRequestMeta(urlStr, options) {
+    try {
+      const hdrs = options?.headers || {};
+      const get  = (k) => (typeof hdrs.get === 'function' ? hdrs.get(k) : hdrs[k]) || null;
+      const uuid = get('device_uuid') || get('Device-Uuid');
+      if (uuid) window.postMessage({ type: 'KLOOK_DEVICE_UUID', uuid }, '*');
+    } catch (_) {}
+    notifySku(urlStr);
+  }
+
   // ── Notify SKU detected in a request URL ──────────────────────────────────
   function notifySku(url) {
     try {
@@ -31,6 +42,50 @@
     } catch (_) {}
   }
 
+  // ── Send full package list (activity → SKUs) so background can auto-sync ──
+  function extractPackagesFull(urlStr, data) {
+    try {
+      const actM       = urlStr.match(/activity_id=(\d+)/);
+      const activity_id = actM?.[1] || null;
+
+      const list =
+        data?.result?.packages     ??
+        data?.result?.package_list ??
+        data?.result?.packageList  ??
+        data?.result?.sku_list     ??
+        data?.result?.skus         ??
+        data?.data?.packages       ??
+        data?.packages             ?? [];
+
+      if (!Array.isArray(list) || list.length === 0) return;
+
+      const packages = list.map(pkg => ({
+        sku_id: String(pkg.sku_id ?? pkg.skuId ?? pkg.package_id ?? pkg.packageId ?? pkg.id ?? ''),
+        name:   pkg.title ?? pkg.name ?? pkg.package_name ?? pkg.packageName ?? pkg.sku_name ?? null,
+      })).filter(p => p.sku_id);
+
+      if (packages.length > 0) {
+        window.postMessage({ type: 'KLOOK_PACKAGES_FULL', activity_id, packages }, '*');
+      }
+    } catch (_) {}
+  }
+
+  // ── Send full calendar data so background can import directly ─────────────
+  function extractCalendarFull(urlStr, data) {
+    try {
+      const skuM        = urlStr.match(/[?&]sku_id=(\d+)/);
+      const actM        = urlStr.match(/[?&]activity_id=(\d+)/);
+      const sku_id      = skuM?.[1] || null;
+      const activity_id = actM?.[1] || null;
+      if (!sku_id) return;
+
+      const calendar = data?.result?.calendar;
+      if (!Array.isArray(calendar) || calendar.length === 0) return;
+
+      window.postMessage({ type: 'KLOOK_CALENDAR_FULL', sku_id, activity_id, calendar }, '*');
+    } catch (_) {}
+  }
+
   // ── Recursively scan any API response for arrays that look like activity lists
   function detectActivities(data) {
     try {
@@ -41,12 +96,9 @@
         if (Array.isArray(obj)) {
           if (obj.length === 0) return;
           const sample = obj[0];
-          // Check if elements have an activity_id field (various naming)
           const idVal =
-            sample?.activity_id   ??
-            sample?.activityId    ??
-            sample?.act_id        ??
-            sample?.actId;
+            sample?.activity_id ?? sample?.activityId ??
+            sample?.act_id      ?? sample?.actId;
           if (idVal !== undefined && /^\d+$/.test(String(idVal))) {
             obj.forEach(item => {
               const aid = String(
@@ -54,17 +106,12 @@
               );
               if (!/^\d+$/.test(aid) || aid.length < 4) return;
               const name =
-                item.title         ??
-                item.name          ??
-                item.activity_name ??
-                item.act_title     ??
-                item.activityTitle ??
-                item.internal_name ??
-                null;
+                item.title         ?? item.name          ??
+                item.activity_name ?? item.act_title     ??
+                item.activityTitle ?? item.internal_name ?? null;
               found.push({ activity_id: aid, name: name ? String(name) : null });
             });
           } else {
-            // recurse into each element
             obj.forEach(el => scan(el, depth + 1));
           }
         } else if (obj && typeof obj === 'object') {
@@ -75,10 +122,7 @@
       scan(data, 0);
 
       if (found.length > 0) {
-        // deduplicate
-        const unique = Object.values(
-          Object.fromEntries(found.map(a => [a.activity_id, a]))
-        );
+        const unique = Object.values(Object.fromEntries(found.map(a => [a.activity_id, a])));
         window.postMessage({ type: 'KLOOK_ACTIVITIES_FOUND', activities: unique }, '*');
       }
     } catch (_) {}
@@ -87,19 +131,25 @@
   // ── Intercept fetch ───────────────────────────────────────────────────────
   const origFetch = window.fetch;
   window.fetch = function (...args) {
-    const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+    const url    = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
     const urlStr = String(url);
+    const opts   = args[1] || {};
 
-    notifySku(urlStr);
+    captureRequestMeta(urlStr, opts);
 
     const promise = origFetch.apply(this, args);
 
-    // Inspect ALL merchant API responses
     if (urlStr.includes('productadminbffsrv') || urlStr.includes('merchant.klook.com')) {
       return promise.then(response => {
         response.clone().json().then(data => {
           detectActivities(data);
-          if (urlStr.includes('get_activity_packages_info_v2')) extractSkuNames(data);
+          if (urlStr.includes('get_activity_packages_info_v2')) {
+            extractSkuNames(data);
+            extractPackagesFull(urlStr, data);
+          }
+          if (urlStr.includes('get_calendar_by_sku_id')) {
+            extractCalendarFull(urlStr, data);
+          }
         }).catch(() => {});
         return response;
       });
@@ -124,7 +174,13 @@
         try {
           const data = JSON.parse(this.responseText);
           detectActivities(data);
-          if (url.includes('get_activity_packages_info_v2')) extractSkuNames(data);
+          if (url.includes('get_activity_packages_info_v2')) {
+            extractSkuNames(data);
+            extractPackagesFull(url, data);
+          }
+          if (url.includes('get_calendar_by_sku_id')) {
+            extractCalendarFull(url, data);
+          }
         } catch (_) {}
       });
     }

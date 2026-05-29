@@ -130,7 +130,7 @@ router.get('/skus', async (req, res) => {
   }
 });
 
-// Return Klook calendar slots stored in the DB, optionally filtered by sku_id
+// Return Klook calendar slots stored in the DB, optionally filtered by sku_id / date range
 router.get('/calendar', async (req, res) => {
   try {
     const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='klook'");
@@ -139,15 +139,26 @@ router.get('/calendar', async (req, res) => {
     const params = [platform[0].id];
     let where = 'WHERE pl.platform_id = $1';
     if (req.query.sku_id) {
-      where += ` AND pl.platform_data->>'sku_id' = $2`;
+      where += ` AND pl.platform_data->>'sku_id' = $${params.length + 1}`;
       params.push(String(req.query.sku_id));
+    }
+    if (req.query.date_from) {
+      where += ` AND pl.platform_data->>'start_time' >= $${params.length + 1}`;
+      params.push(req.query.date_from + ' 00:00:00');
+    }
+    if (req.query.date_to) {
+      where += ` AND pl.platform_data->>'start_time' <= $${params.length + 1}`;
+      params.push(req.query.date_to + ' 23:59:59');
     }
 
     const { rows } = await pool.query(
       `SELECT p.id, p.title, p.status,
-              pl.external_id, pl.platform_data, pl.last_synced_at
+              pl.external_id, pl.platform_data, pl.last_synced_at,
+              ka.name AS activity_name
        FROM platform_listings pl
        JOIN products p ON p.id = pl.product_id
+       LEFT JOIN klook_activities ka
+         ON ka.activity_id = pl.platform_data->>'activity_id'
        ${where}
        ORDER BY pl.platform_data->>'start_time' ASC NULLS LAST`,
       params

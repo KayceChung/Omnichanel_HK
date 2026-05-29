@@ -12,7 +12,15 @@ chrome.alarms.onAlarm.addListener(alarm => {
 
 // Delay first run so service worker network stack is ready
 chrome.runtime.onInstalled.addListener(() => setTimeout(() => { pollJobs(); autoSyncToday(); }, 3000));
-chrome.runtime.onStartup.addListener(()   => setTimeout(() => { pollJobs(); autoSyncToday(); }, 3000));
+chrome.runtime.onStartup.addListener(() => {
+  setTimeout(async () => {
+    pollJobs();
+    autoSyncToday();
+    // Restore device_uuid into headers from previous session
+    const { klookDeviceUuid } = await chrome.storage.local.get('klookDeviceUuid');
+    if (klookDeviceUuid) KLOOK_HEADERS['device_uuid'] = klookDeviceUuid;
+  }, 3000);
+});
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'poll') {
@@ -31,6 +39,60 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch(err   => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  // ── Klook auto-extract messages ───────────────────────────────────────────
+
+  // User opened merchant.klook.com → trigger full auto-sync (debounced 5 min)
+  if (msg.type === 'klookPageOpened') {
+    autoSyncKlook().catch(() => {});
+    return false;
+  }
+
+  // device_uuid captured from live request header → store + inject into klookFetch
+  if (msg.type === 'klookDeviceUuid') {
+    chrome.storage.local.set({ klookDeviceUuid: msg.uuid });
+    KLOOK_HEADERS['device_uuid'] = msg.uuid;
+    return false;
+  }
+
+  // Full package list intercepted from get_activity_packages_info_v2 response
+  // → immediately fetch calendar for each package we don't yet have
+  if (msg.type === 'klookPackagesFull') {
+    const today = new Date().toISOString().slice(0, 10);
+    const endDate = new Date(); endDate.setMonth(endDate.getMonth() + 1);
+    const end = endDate.toISOString().slice(0, 10);
+    for (const pkg of (msg.packages || [])) {
+      if (!pkg.sku_id) continue;
+      executeKlookSyncCalendar({
+        sku_id:       pkg.sku_id,
+        activity_id:  msg.activity_id || '',
+        start_date:   today,
+        end_date:     end,
+        product_name: pkg.name || null,
+      }).catch(() => {});
+    }
+    return false;
+  }
+
+  // Full calendar intercepted from get_calendar_by_sku_id response
+  // → import directly, no extra API call needed
+  if (msg.type === 'klookCalendarFull') {
+    const { sku_id, activity_id, calendar } = msg;
+    // Look up stored product_name for this SKU
+    chrome.storage.local.get('klookSkus', data => {
+      const entry = (data.klookSkus || []).find(s => String(s.sku_id) === String(sku_id));
+      const product_name = entry?.title || null;
+      fetch(`${API_URL}/api/klook/import-calendar`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ sku_id, activity_id, calendar, product_name }),
+      }).catch(() => {});
+    });
+    return false;
+  }
+
+  // ── Existing handlers ─────────────────────────────────────────────────────
+
   if (msg.type === 'klookSkuDetected') {
     chrome.storage.local.get('klookSkus', data => {
       const skus = data.klookSkus || [];
@@ -46,7 +108,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
   if (msg.type === 'klookActivitiesFound') {
-    // Auto-save all detected activity IDs to the server
     fetch(`${API_URL}/api/klook/activities/bulk`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -130,6 +191,50 @@ async function executeJob(job) {
 async function autoSyncToday() {
   const today = new Date().toISOString().slice(0, 10);
   return syncSeatosTrips(today, today);
+}
+
+// ── Klook full auto-sync ──────────────────────────────────────────────────────
+// Called whenever user opens merchant.klook.com (debounced 5 min) and on startup.
+// Fetches all stored activities → packages → calendar without any manual trigger.
+
+async function autoSyncKlook() {
+  // Debounce: skip if last run was < 5 minutes ago
+  const { lastKlookAutoSync } = await chrome.storage.local.get('lastKlookAutoSync');
+  if (lastKlookAutoSync && Date.now() - lastKlookAutoSync < 5 * 60 * 1000) return;
+  await chrome.storage.local.set({ lastKlookAutoSync: Date.now() });
+
+  // Restore device_uuid into live headers if previously captured
+  const { klookDeviceUuid } = await chrome.storage.local.get('klookDeviceUuid');
+  if (klookDeviceUuid) KLOOK_HEADERS['device_uuid'] = klookDeviceUuid;
+
+  try {
+    const r = await fetch(`${API_URL}/api/klook/activities`, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return;
+    const activities = await r.json();
+    if (!activities.length) return;
+
+    const today   = new Date().toISOString().slice(0, 10);
+    const endDate = new Date(); endDate.setMonth(endDate.getMonth() + 1);
+    const end     = endDate.toISOString().slice(0, 10);
+
+    for (const act of activities) {
+      try {
+        await executeKlookSyncActivity({
+          activity_id:   act.activity_id,
+          activity_name: act.name,
+          start_date:    today,
+          end_date:      end,
+        });
+      } catch (err) {
+        console.warn('[Klook] auto-sync activity', act.activity_id, err.message);
+      }
+    }
+
+    await chrome.storage.local.set({ lastKlookAutoSync: Date.now(), lastKlookSyncResult: { activities: activities.length, ts: Date.now() } });
+    console.log('[Klook] Auto-sync complete:', activities.length, 'activities');
+  } catch (err) {
+    console.warn('[Klook] autoSyncKlook failed:', err.message);
+  }
 }
 
 async function syncSeatosTrips(startDate, endDate) {
