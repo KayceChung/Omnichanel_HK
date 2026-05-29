@@ -338,6 +338,7 @@ export default function Klook() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={th}>Tuyến xe</th>
                 <th style={th}>Giờ khởi hành</th>
                 <th style={th}>Trạng thái</th>
                 <th style={th}>Chỗ trống</th>
@@ -351,9 +352,13 @@ export default function Klook() {
                 const meta      = slot.platform_data || {};
                 const published = meta.published ?? meta.publish_status === 'published';
                 const retail    = meta.price?.retail_price ?? meta.price?.retailPrice;
+                const tenTuyen  = meta.product_name || activeGoi?.product_name || `Mã ${meta.sku_id || ''}`;
                 return (
                   <tr key={slot.id} style={{ opacity: published ? 1 : 0.6 }}>
-                    <td style={{ ...td, fontWeight: 600 }}>{meta.start_time || '—'}</td>
+                    <td style={{ ...td, maxWidth: 220 }}>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>{tenTuyen}</span>
+                    </td>
+                    <td style={{ ...td, fontWeight: 600, whiteSpace: 'nowrap' }}>{meta.start_time || '—'}</td>
                     <td style={td}><StatusBadge status={published ? 'done' : 'failed'} /></td>
                     <td style={{ ...td, textAlign: 'center' }}>{meta.inv_quantity ?? '—'}</td>
                     <td style={{ ...td, textAlign: 'center', fontWeight: (meta.sales ?? 0) > 0 ? 700 : 400, color: (meta.sales ?? 0) > 0 ? '#374151' : '#9ca3af' }}>
@@ -383,7 +388,7 @@ export default function Klook() {
                 );
               })}
               {khoangGio.length === 0 && (
-                <tr><td colSpan={6} style={{ ...td, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
+                <tr><td colSpan={7} style={{ ...td, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
                   Chưa có dữ liệu — bấm Làm mới để tải.
                 </td></tr>
               )}
