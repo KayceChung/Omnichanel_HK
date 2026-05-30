@@ -6,17 +6,21 @@ chrome.alarms.create('poll',     { periodInMinutes: 1  });
 chrome.alarms.create('autoSync', { periodInMinutes: 60 });
 
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === 'poll')     pollJobs();
-  if (alarm.name === 'autoSync') autoSyncToday();
+  if (alarm.name === 'poll')     pollJobs().catch(e => console.warn('[poll]', e.message));
+  if (alarm.name === 'autoSync') autoSyncToday().catch(e => console.warn('[autoSync]', e.message));
 });
 
 // Delay first run so service worker network stack is ready
-chrome.runtime.onInstalled.addListener(() => setTimeout(() => { pollJobs(); autoSyncToday(); }, 3000));
+chrome.runtime.onInstalled.addListener(() => {
+  setTimeout(() => {
+    pollJobs().catch(e => console.warn('[poll]', e.message));
+    autoSyncToday().catch(e => console.warn('[autoSync]', e.message));
+  }, 3000);
+});
 chrome.runtime.onStartup.addListener(() => {
   setTimeout(async () => {
-    pollJobs();
-    autoSyncToday();
-    // Restore device_uuid into headers from previous session
+    pollJobs().catch(e => console.warn('[poll]', e.message));
+    autoSyncToday().catch(e => console.warn('[autoSync]', e.message));
     const { klookDeviceUuid } = await chrome.storage.local.get('klookDeviceUuid');
     if (klookDeviceUuid) KLOOK_HEADERS['device_uuid'] = klookDeviceUuid;
   }, 3000);
@@ -241,12 +245,18 @@ async function syncSeatosTrips(startDate, endDate) {
   const jwt = await getSeatosJwt();
 
   const url = `${SEATOS_BASE}/v3/trips?start_date=${startDate}&end_date=${endDate}&page=1&per_page=100`;
-  const res = await fetch(url, {
-    headers: {
-      Accept:        'application/json',
-      Authorization: `Bearer ${jwt}`,
-    },
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Accept:        'application/json',
+        Authorization: `Bearer ${jwt}`,
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (err) {
+    throw new Error(`SeatOS network error: ${err.message}`);
+  }
 
   if (!res.ok) {
     const text = await res.text();
