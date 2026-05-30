@@ -31,9 +31,10 @@
       return out;
     }
     if (typeof obj === 'object') {
-      const rawId = obj.sku_id ?? obj.skuId;
+      const rawId = obj.sku_id ?? obj.skuId ?? obj.unit_id ?? obj.unitId;
       if (rawId !== undefined && /^\d+$/.test(String(rawId))) {
-        const title = obj.title ?? obj.name ?? obj.sku_name ?? obj.skuName ?? obj.package_name ?? null;
+        const title = obj.title ?? obj.name ?? obj.sku_name ?? obj.skuName
+                   ?? obj.unit_name ?? obj.unitName ?? obj.package_name ?? null;
         out.push({ sku_id: String(rawId), title: title ? String(title) : null });
       }
       Object.values(obj).forEach(v => { if (v && typeof v === 'object') out.push(...collectSkus(v, depth + 1)); });

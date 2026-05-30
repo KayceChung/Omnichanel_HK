@@ -120,4 +120,35 @@ router.post('/import', async (req, res) => {
   res.json(results);
 });
 
+// Toggle active / inactive for a SeatOS trip (local status — does not call SeatOS API)
+router.patch('/trips/:id/status', async (req, res) => {
+  const { status } = req.body; // 'active' | 'inactive'
+  if (!['active', 'inactive'].includes(status)) {
+    return res.status(400).json({ error: 'status must be active or inactive' });
+  }
+  try {
+    const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='seatos'");
+    if (!platform.length) return res.status(404).json({ error: 'seatos platform not found' });
+
+    // Update both products.status and platform_listings.status
+    const { rows } = await pool.query(
+      `UPDATE products p SET status=$1, updated_at=NOW()
+       FROM platform_listings pl
+       WHERE pl.product_id = p.id AND pl.platform_id = $2 AND p.id = $3
+       RETURNING p.id`,
+      [status, platform[0].id, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'trip not found' });
+
+    await pool.query(
+      `UPDATE platform_listings SET status=$1, updated_at=NOW()
+       WHERE product_id=$2 AND platform_id=$3`,
+      [status === 'active' ? 'live' : 'inactive', req.params.id, platform[0].id]
+    );
+    res.json({ ok: true, id: req.params.id, status });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

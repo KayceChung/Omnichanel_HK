@@ -212,6 +212,10 @@ async function autoSyncKlook() {
   if (klookDeviceUuid) KLOOK_HEADERS['device_uuid'] = klookDeviceUuid;
 
   try {
+    // Step 1: proactively pull ALL activities from Klook API (doesn't require manual browsing)
+    await tryFetchAllActivities();
+
+    // Step 2: get stored activities (now includes auto-fetched ones above)
     const r = await fetch(`${API_URL}/api/klook/activities`, { signal: AbortSignal.timeout(10000) });
     if (!r.ok) return;
     const activities = await r.json();
@@ -309,9 +313,11 @@ async function klookFetch(url, options = {}) {
   return json;
 }
 
-// Recursively collect every object that has a sku_id field (not package_id).
-// Klook structure: activity → packages (package_id) → sku_list (sku_id + title).
-// By targeting sku_id we land at the right level where cabin names live.
+// Recursively collect every object that carries a SKU/unit identifier.
+// Klook uses different field names at different API levels:
+//   - Calendar & URL level  : sku_id / skuId
+//   - Package units level   : unit_id / unitId
+// We target both so we capture cabin names regardless of which API was called.
 function findAllSkus(obj, depth = 0) {
   const results = [];
   if (depth > 8 || !obj) return results;
@@ -322,22 +328,72 @@ function findAllSkus(obj, depth = 0) {
   }
 
   if (typeof obj === 'object') {
-    const rawId  = obj.sku_id ?? obj.skuId;
+    const rawId  = obj.sku_id  ?? obj.skuId  ?? obj.unit_id ?? obj.unitId;
     const rawStr = rawId !== undefined ? String(rawId) : null;
     if (rawStr && /^\d+$/.test(rawStr)) {
       const title =
-        obj.title        ?? obj.name         ??
-        obj.sku_name     ?? obj.skuName      ??
-        obj.package_name ?? obj.packageName  ?? null;
+        obj.title      ?? obj.name        ??
+        obj.sku_name   ?? obj.skuName     ??
+        obj.unit_name  ?? obj.unitName    ??
+        obj.package_name ?? obj.packageName ?? null;
       results.push({ sku_id: rawStr, title: title ? String(title) : null });
     }
-    // Always recurse into child values
     for (const v of Object.values(obj)) {
       if (v && typeof v === 'object') results.push(...findAllSkus(v, depth + 1));
     }
   }
 
   return results;
+}
+
+// Recursively collect activity_id + name from any Klook API response
+function findAllActivities(obj, depth = 0) {
+  const results = [];
+  if (depth > 6 || !obj) return results;
+  if (Array.isArray(obj)) {
+    for (const item of obj) results.push(...findAllActivities(item, depth + 1));
+    return results;
+  }
+  if (typeof obj === 'object') {
+    const actId = obj.activity_id ?? obj.activityId ?? obj.act_id ?? obj.actId;
+    if (actId && /^\d{4,8}$/.test(String(actId))) {
+      const name = obj.title ?? obj.name ?? obj.activity_name ?? obj.activityTitle ?? null;
+      results.push({ activity_id: String(actId), name: name ? String(name) : null });
+    }
+    for (const v of Object.values(obj)) {
+      if (v && typeof v === 'object') results.push(...findAllActivities(v, depth + 1));
+    }
+  }
+  return results;
+}
+
+// Try common Klook activity-list endpoints to fetch ALL activities in one call.
+// Runs on page-open so the user doesn't need to manually browse each activity.
+const ACTIVITY_LIST_PATHS = [
+  '/v1/productadminbffsrv/merchant/activity_service/get_merchant_activity_list?language=en_US&page=1&page_size=500',
+  '/v1/productadminbffsrv/merchant/activity_service/list_activity?language=en_US&page=1&page_size=500',
+  '/v1/productadminbffsrv/merchant/activity_service/search_activity?language=en_US&page=1&page_size=500&status=published',
+  '/v1/productadminbffsrv/merchant/activity_service/get_activity_list?language=en_US&page=1&page_size=500',
+];
+
+async function tryFetchAllActivities() {
+  for (const path of ACTIVITY_LIST_PATHS) {
+    try {
+      const json      = await klookFetch(`${KLOOK_BASE}${path}`);
+      const activities = findAllActivities(json);
+      if (activities.length > 0) {
+        await fetch(`${API_URL}/api/klook/activities/bulk`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activities }),
+        });
+        console.log('[Klook] Auto-fetched', activities.length, 'activities via', path);
+        return activities.length;
+      }
+    } catch (e) {
+      // endpoint not found — try next
+    }
+  }
+  return 0;
 }
 
 async function executeKlookSyncActivity({ activity_id, activity_name, start_date, end_date }) {
