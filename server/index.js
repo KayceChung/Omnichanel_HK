@@ -15,6 +15,20 @@ app.use('/api/platforms', require('./routes/platforms'));
 app.use('/api/seatos',    require('./routes/seatos'));
 app.use('/api/klook',     require('./routes/klook'));
 
+// ── Admin: full DB reset ──────────────────────────────────────────────────────
+app.post('/api/admin/reset', async (req, res) => {
+  try {
+    const { pool } = require('./db');
+    await pool.query(`
+      TRUNCATE jobs, platform_listings, products, klook_activities
+      RESTART IDENTITY CASCADE
+    `);
+    res.json({ ok: true, message: 'Database reset — all data cleared, platforms config kept.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Serve dashboard if dist exists (built on Railway or locally)
 const dist = path.join(__dirname, '../dashboard/dist');
 if (require('fs').existsSync(dist)) {
