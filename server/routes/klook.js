@@ -228,7 +228,9 @@ router.post('/sync-calendar', async (req, res) => {
   }
 });
 
-// Enqueue a job to activate/deactivate a timeslot
+// Enqueue a job to activate/deactivate a timeslot.
+// Also optimistically updates platform_data.published in DB immediately so
+// the dashboard reflects the new status without waiting for the extension job.
 router.post('/update-schedule', async (req, res) => {
   const { sku_id, start_time, published, inv_quantity, price, cut_off_time } = req.body;
   if (!sku_id || !start_time || published === undefined) {
@@ -237,12 +239,37 @@ router.post('/update-schedule', async (req, res) => {
   try {
     const { rows: platform } = await pool.query("SELECT id FROM platforms WHERE name='klook'");
     if (!platform.length) return res.status(404).json({ error: 'klook platform not found' });
+    const platformId = platform[0].id;
 
+    // 1. Queue the job so extension calls the real Klook API
     const { rows: job } = await pool.query(
       `INSERT INTO jobs (type, platform_id, payload, status)
        VALUES ('klook_update_schedule', $1, $2, 'pending') RETURNING *`,
-      [platform[0].id, JSON.stringify({ sku_id, start_time, published, inv_quantity, price, cut_off_time })]
+      [platformId, JSON.stringify({ sku_id, start_time, published, inv_quantity, price, cut_off_time })]
     );
+
+    // 2. Optimistically reflect the new status in DB right now
+    //    so dashboard reload shows correct status without waiting for the job
+    await pool.query(
+      `UPDATE platform_listings
+       SET platform_data = platform_data
+                        || jsonb_build_object('published', $1::boolean)
+                        || jsonb_build_object('publish_status', $2::int),
+           status      = $3,
+           updated_at  = NOW()
+       WHERE platform_id = $4
+         AND platform_data->>'sku_id'     = $5
+         AND platform_data->>'start_time' = $6`,
+      [
+        published,
+        published ? 1 : 0,
+        published ? 'live' : 'inactive',
+        platformId,
+        String(sku_id),
+        String(start_time),
+      ]
+    );
+
     res.status(201).json(job[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -108,10 +108,11 @@ export default function Klook() {
       const job = await r.json();
       if (!r.ok) throw new Error(job.error);
       setMsgs(m => ({ ...m, [slot.id]: 'ok' }));
+      // DB already updated optimistically — reload quickly to reflect new status
       setTimeout(() => {
         setMsgs(m => { const n = { ...m }; delete n[slot.id]; return n; });
         loadSlots(dateFrom, dateTo);
-      }, 2000);
+      }, 600);
     } catch {
       setMsgs(m => ({ ...m, [slot.id]: 'lỗi' }));
     }
