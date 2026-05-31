@@ -26,8 +26,9 @@ export default function Klook() {
   const [customTo,   setCTo]     = useState(inDays(6));
   const [filter,    setFilter]   = useState('all'); // 'all' | 'active' | 'inactive'
   const [msgs,      setMsgs]     = useState({});    // slot.id → message string
-  const [inlineRename, setInlineRename] = useState(null); // sku_id being renamed inline
+  const [inlineRename, setInlineRename] = useState(null);
   const [inlineVal,    setInlineVal]    = useState('');
+  const [filterActivity, setFilterActivity] = useState(null); // null = all
 
   // ── Settings panel ──────────────────────────────────────────────────────────
   const [open,       setOpen]     = useState(false);
@@ -168,9 +169,15 @@ export default function Klook() {
 
   const isPublished = (s) => s.platform_data?.published ?? s.platform_data?.publish_status === 'published';
 
+  // Unique activity names extracted from loaded slots (for the route filter)
+  const activityOptions = [...new Set(
+    slots.map(s => s.activity_name).filter(Boolean)
+  )].sort();
+
   const filtered = slots.filter(s => {
-    if (filter === 'active')   return isPublished(s);
-    if (filter === 'inactive') return !isPublished(s);
+    if (filter === 'active'   && !isPublished(s)) return false;
+    if (filter === 'inactive' &&  isPublished(s)) return false;
+    if (filterActivity && s.activity_name !== filterActivity) return false;
     return true;
   });
 
@@ -181,8 +188,8 @@ export default function Klook() {
   }
   const dates = Object.keys(byDate).sort();
 
-  const totalOpen   = slots.filter(isPublished).length;
-  const totalClosed = slots.length - totalOpen;
+  const totalOpen   = filtered.filter(isPublished).length;
+  const totalClosed = filtered.length - totalOpen;
 
   const jobsDone    = syncJobs.filter(j => j.status === 'done').length;
   const jobsFailed  = syncJobs.filter(j => j.status === 'failed').length;
@@ -265,6 +272,32 @@ export default function Klook() {
         </div>
       </div>
 
+      {/* ══ ROUTE FILTER ══════════════════════════════════════════════════════ */}
+      {activityOptions.length > 0 && (
+        <div style={{ marginBottom: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
+            Tuyến:
+          </span>
+          <button onClick={() => setFilterActivity(null)}
+            style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid',
+              borderColor: !filterActivity ? '#2563eb' : '#e5e7eb',
+              background:  !filterActivity ? '#2563eb' : '#fff',
+              color:       !filterActivity ? '#fff'    : '#6b7280' }}>
+            Tất cả
+          </button>
+          {activityOptions.map(act => (
+            <button key={act} onClick={() => setFilterActivity(act === filterActivity ? null : act)}
+              style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid',
+                borderColor: filterActivity === act ? '#1e40af' : '#e5e7eb',
+                background:  filterActivity === act ? '#1e40af' : '#fff',
+                color:       filterActivity === act ? '#fff'    : '#374151',
+                maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {act}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ══ MAIN SCHEDULE ═════════════════════════════════════════════════════ */}
       <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', marginBottom: 12 }}>
         {loading ? (
@@ -304,112 +337,135 @@ export default function Klook() {
                   </span>
                 </div>
 
-                {/* ── Group by product name ── */}
+                {/* ── Group: Tuyến → Sản phẩm → Giờ ── */}
                 {(() => {
-                  const byProduct = {};
+                  // Tầng 1: nhóm theo activity
+                  const byAct = {};
                   for (const s of daySlots) {
-                    const key = s.platform_data?.product_name || `SKU ${s.platform_data?.sku_id}`;
-                    if (!byProduct[key]) byProduct[key] = [];
-                    byProduct[key].push(s);
+                    const actKey = s.activity_name || '(Chưa xác định tuyến)';
+                    if (!byAct[actKey]) byAct[actKey] = [];
+                    byAct[actKey].push(s);
                   }
-                  const productKeys = Object.keys(byProduct).sort();
+                  const actKeys = Object.keys(byAct).sort();
 
-                  return productKeys.map((productName, pi) => {
-                    const productSlots = byProduct[productName].slice().sort((a, b) =>
-                      (a.platform_data?.start_time || '').localeCompare(b.platform_data?.start_time || ''));
-                    const productOpen  = productSlots.filter(isPublished).length;
-                    const firstMeta    = productSlots[0]?.platform_data || {};
-                    const activityName = productSlots[0]?.activity_name || null;
-                    const skuId        = firstMeta.sku_id;
-                    const retail       = firstMeta.price?.retail_price ?? firstMeta.price?.retailPrice;
+                  return actKeys.map((actName, ai) => {
+                    const actSlots  = byAct[actName];
+                    const actOpen   = actSlots.filter(isPublished).length;
+
+                    // Tầng 2: nhóm theo product_name trong activity
+                    const byProd = {};
+                    for (const s of actSlots) {
+                      const key = s.platform_data?.product_name || `SKU ${s.platform_data?.sku_id}`;
+                      if (!byProd[key]) byProd[key] = [];
+                      byProd[key].push(s);
+                    }
+                    const prodKeys = Object.keys(byProd).sort();
 
                     return (
-                      <div key={productName}>
-                        {/* Product header */}
+                      <div key={actName}>
+                        {/* ── Activity / Tuyến header ── */}
                         <div style={{
                           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                          padding: '7px 16px',
-                          background: pi % 2 === 0 ? '#f9fafb' : '#f4f6f8',
-                          borderTop: pi === 0 ? 'none' : '1px solid #e5e7eb',
-                          borderBottom: '1px solid #e5e7eb',
+                          padding: '6px 16px',
+                          background: '#eef2ff',
+                          borderTop: ai === 0 ? 'none' : '2px solid #c7d2fe',
+                          borderBottom: '1px solid #c7d2fe',
                         }}>
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: '#1e3a5f' }}>
-                              {productName}
-                            </span>
-                            {activityName && (
-                              <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 8 }}>
-                                {activityName}
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                            {retail != null && (
-                              <span style={{ fontSize: 11, color: '#9ca3af' }}>
-                                {Math.round(retail / 1000)}k
-                              </span>
-                            )}
-                            <span style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>
-                              <span style={{ color: productOpen > 0 ? '#16a34a' : '#9ca3af', fontWeight: 700 }}>
-                                {productOpen}
-                              </span>
-                              {' mở / '}{productSlots.length}
-                            </span>
-                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#3730a3' }}>
+                            {actName}
+                          </span>
+                          <span style={{ fontSize: 11, color: '#6366f1' }}>
+                            <span style={{ fontWeight: 700 }}>{actOpen}</span>
+                            {' mở / '}{actSlots.length}
+                          </span>
                         </div>
 
-                        {/* Slot rows — compact, time only */}
-                        {productSlots.map(slot => {
-                          const meta      = slot.platform_data || {};
-                          const published = isPublished(slot);
-                          const sales     = meta.sales ?? 0;
-                          const inv       = meta.inv_quantity ?? '—';
-                          const msg       = msgs[slot.id];
+                        {/* ── Product groups within activity ── */}
+                        {prodKeys.map((productName, pi) => {
+                          const prodSlots  = byProd[productName].slice().sort((a, b) =>
+                            (a.platform_data?.start_time || '').localeCompare(b.platform_data?.start_time || ''));
+                          const prodOpen   = prodSlots.filter(isPublished).length;
+                          const firstMeta  = prodSlots[0]?.platform_data || {};
+                          const retail     = firstMeta.price?.retail_price ?? firstMeta.price?.retailPrice;
 
                           return (
-                            <div key={slot.id} style={{
-                              display: 'grid',
-                              gridTemplateColumns: '64px 1fr 84px',
-                              alignItems: 'center',
-                              padding: '7px 16px 7px 28px',
-                              borderBottom: '1px solid #f3f4f6',
-                              background: published ? '#fff' : '#fafafa',
-                              opacity: published ? 1 : 0.55,
-                            }}>
-                              {/* Time */}
-                              <div style={{ fontSize: 15, fontWeight: 800, color: '#111', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.3px' }}>
-                                {fmtTime(meta.start_time)}
-                              </div>
-
-                              {/* Sales / Inventory */}
-                              <div style={{ fontSize: 12, color: '#9ca3af' }}>
-                                <span style={{ fontWeight: sales > 0 ? 700 : 400, color: sales > 0 ? '#111' : '#d1d5db' }}>
-                                  {sales}
+                            <div key={productName}>
+                              {/* Product sub-header */}
+                              <div style={{
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                padding: '5px 16px 5px 28px',
+                                background: '#f9fafb',
+                                borderBottom: '1px solid #e5e7eb',
+                                borderTop: pi > 0 ? '1px solid #e5e7eb' : 'none',
+                              }}>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: '#1e3a5f' }}>
+                                  {productName}
                                 </span>
-                                <span style={{ color: '#e5e7eb', margin: '0 3px' }}>/</span>
-                                {inv}
+                                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0 }}>
+                                  {retail != null && (
+                                    <span style={{ fontSize: 11, color: '#9ca3af' }}>
+                                      {Math.round(retail / 1000)}k
+                                    </span>
+                                  )}
+                                  <span style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>
+                                    <span style={{ fontWeight: 700, color: prodOpen > 0 ? '#16a34a' : '#9ca3af' }}>
+                                      {prodOpen}
+                                    </span>
+                                    {' / '}{prodSlots.length}
+                                  </span>
+                                </div>
                               </div>
 
-                              {/* Toggle */}
-                              <div style={{ textAlign: 'right' }}>
-                                {msg === 'ok' ? (
-                                  <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>✓</span>
-                                ) : msg === 'lỗi' ? (
-                                  <span style={{ fontSize: 11, color: '#dc2626', fontSize: 11 }}>Lỗi</span>
-                                ) : msg ? (
-                                  <span style={{ fontSize: 11, color: '#9ca3af' }}>{msg}</span>
-                                ) : published ? (
-                                  <button onClick={() => toggle(slot, false)}
-                                    style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
-                                    Tắt
-                                  </button>
-                                ) : (
-                                  <button onClick={() => toggle(slot, true)}
-                                    style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#dcfce7', color: '#16a34a', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
-                                    Bật
-                                  </button>
-                                )}
-                              </div>
+                              {/* Tầng 3: time slot rows */}
+                              {prodSlots.map(slot => {
+                                const meta      = slot.platform_data || {};
+                                const published = isPublished(slot);
+                                const sales     = meta.sales ?? 0;
+                                const inv       = meta.inv_quantity ?? '—';
+                                const msg       = msgs[slot.id];
+
+                                return (
+                                  <div key={slot.id} style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '60px 1fr 84px',
+                                    alignItems: 'center',
+                                    padding: '6px 16px 6px 40px',
+                                    borderBottom: '1px solid #f3f4f6',
+                                    background: published ? '#fff' : '#fafafa',
+                                    opacity: published ? 1 : 0.5,
+                                  }}>
+                                    <div style={{ fontSize: 15, fontWeight: 800, color: '#111', fontVariantNumeric: 'tabular-nums' }}>
+                                      {fmtTime(meta.start_time)}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                                      <span style={{ fontWeight: sales > 0 ? 700 : 400, color: sales > 0 ? '#374151' : '#d1d5db' }}>
+                                        {sales}
+                                      </span>
+                                      <span style={{ margin: '0 3px', color: '#e5e7eb' }}>/</span>
+                                      {inv}
+                                    </div>
+                                    <div style={{ textAlign: 'right' }}>
+                                      {msg === 'ok' ? (
+                                        <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>✓</span>
+                                      ) : msg === 'lỗi' ? (
+                                        <span style={{ fontSize: 11, color: '#dc2626' }}>Lỗi</span>
+                                      ) : msg ? (
+                                        <span style={{ fontSize: 11, color: '#9ca3af' }}>{msg}</span>
+                                      ) : published ? (
+                                        <button onClick={() => toggle(slot, false)}
+                                          style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
+                                          Tắt
+                                        </button>
+                                      ) : (
+                                        <button onClick={() => toggle(slot, true)}
+                                          style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#dcfce7', color: '#16a34a', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
+                                          Bật
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           );
                         })}
