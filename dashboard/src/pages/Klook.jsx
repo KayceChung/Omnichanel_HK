@@ -100,9 +100,12 @@ export default function Klook() {
       const r = await fetch(`${API}/api/klook/update-schedule`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sku_id: meta.sku_id, start_time: meta.start_time,
-          published: publish, inv_quantity: meta.inv_quantity ?? 0,
-          price: meta.price ?? undefined, cut_off_time: meta.cut_off_time ?? 147600,
+          sku_id:       meta.sku_id,          // extension will Number() this
+          start_time:   meta.start_time,
+          published:    publish,
+          inv_quantity: meta.inv_quantity,     // keep exact value; -1 = inherit
+          price:        meta.price ?? undefined,
+          cut_off_time: meta.cut_off_time ?? 147600,
         }),
       });
       const job = await r.json();

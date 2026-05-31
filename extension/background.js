@@ -478,12 +478,13 @@ async function executeKlookSyncCalendar({ sku_id, activity_id, start_date, end_d
 }
 
 async function executeKlookUpdateSchedule({ sku_id, start_time, published, inv_quantity, price, cut_off_time }) {
+  // Klook API requires sku_id as integer (not string) — sending string causes 500
   const body = {
-    sku_id,
+    sku_id:       Number(sku_id),
     start_time,
     published:    published ?? true,
-    inv_quantity: inv_quantity ?? 0,
-    cut_off_time: cut_off_time ?? 147600,
+    inv_quantity: (inv_quantity !== undefined && inv_quantity !== null) ? Number(inv_quantity) : -1,
+    cut_off_time: Number(cut_off_time ?? 147600),
   };
   if (price) body.price = price;
 
