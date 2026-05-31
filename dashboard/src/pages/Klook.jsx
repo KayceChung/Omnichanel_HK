@@ -304,121 +304,119 @@ export default function Klook() {
                   </span>
                 </div>
 
-                {/* ── Slot rows ── */}
-                {daySlots.map(slot => {
-                  const meta      = slot.platform_data || {};
-                  const published = isPublished(slot);
-                  const retail    = meta.price?.retail_price ?? meta.price?.retailPrice;
-                  const sales     = meta.sales ?? 0;
-                  const inv       = meta.inv_quantity ?? '—';
-                  const msg       = msgs[slot.id];
+                {/* ── Group by product name ── */}
+                {(() => {
+                  const byProduct = {};
+                  for (const s of daySlots) {
+                    const key = s.platform_data?.product_name || `SKU ${s.platform_data?.sku_id}`;
+                    if (!byProduct[key]) byProduct[key] = [];
+                    byProduct[key].push(s);
+                  }
+                  const productKeys = Object.keys(byProduct).sort();
 
-                  // Trip name: use activity_name from JOIN, fallback to activity_id
-                  const tripName = slot.activity_name
-                    || (meta.activity_id ? `Tuyến #${meta.activity_id}` : null)
-                    || '—';
-                  const tripMissing = !slot.activity_name;
+                  return productKeys.map((productName, pi) => {
+                    const productSlots = byProduct[productName].slice().sort((a, b) =>
+                      (a.platform_data?.start_time || '').localeCompare(b.platform_data?.start_time || ''));
+                    const productOpen  = productSlots.filter(isPublished).length;
+                    const firstMeta    = productSlots[0]?.platform_data || {};
+                    const activityName = productSlots[0]?.activity_name || null;
+                    const skuId        = firstMeta.sku_id;
+                    const retail       = firstMeta.price?.retail_price ?? firstMeta.price?.retailPrice;
 
-                  // Cabin name: use product_name, null means needs naming
-                  const cabinName  = meta.product_name || null;
-                  const skuId      = meta.sku_id;
-                  const isRenamingThis = inlineRename === skuId;
-
-                  return (
-                    <div key={slot.id} style={{
-                      display: 'grid',
-                      gridTemplateColumns: '52px 1fr auto 90px',
-                      gap: 12,
-                      alignItems: 'center',
-                      padding: '11px 16px',
-                      borderBottom: '1px solid #f3f4f6',
-                      background: published ? '#fff' : '#fafafa',
-                      opacity: published ? 1 : 0.6,
-                    }}>
-
-                      {/* Time */}
-                      <div style={{ fontSize: 16, fontWeight: 800, color: '#111', letterSpacing: '-0.3px', fontVariantNumeric: 'tabular-nums' }}>
-                        {fmtTime(meta.start_time)}
-                      </div>
-
-                      {/* Route + Cabin */}
-                      <div style={{ minWidth: 0 }}>
-                        {/* Trip name */}
-                        <div style={{ fontSize: 13, fontWeight: 600, color: tripMissing ? '#9ca3af' : '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {tripName}
+                    return (
+                      <div key={productName}>
+                        {/* Product header */}
+                        <div style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: '7px 16px',
+                          background: pi % 2 === 0 ? '#f9fafb' : '#f4f6f8',
+                          borderTop: pi === 0 ? 'none' : '1px solid #e5e7eb',
+                          borderBottom: '1px solid #e5e7eb',
+                        }}>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: '#1e3a5f' }}>
+                              {productName}
+                            </span>
+                            {activityName && (
+                              <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 8 }}>
+                                {activityName}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                            {retail != null && (
+                              <span style={{ fontSize: 11, color: '#9ca3af' }}>
+                                {Math.round(retail / 1000)}k
+                              </span>
+                            )}
+                            <span style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>
+                              <span style={{ color: productOpen > 0 ? '#16a34a' : '#9ca3af', fontWeight: 700 }}>
+                                {productOpen}
+                              </span>
+                              {' mở / '}{productSlots.length}
+                            </span>
+                          </div>
                         </div>
 
-                        {/* Cabin — inline rename if not set */}
-                        {isRenamingThis ? (
-                          <form onSubmit={e => { e.preventDefault(); saveInlineName(skuId); }}
-                            style={{ display: 'flex', gap: 4, marginTop: 3 }}>
-                            <input autoFocus value={inlineVal} onChange={e => setInlineVal(e.target.value)}
-                              placeholder="vd: Upper Cabin / Lower Cabin"
-                              style={{ width: 200, padding: '2px 6px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, outline: 'none' }} />
-                            <button type="submit"
-                              style={{ padding: '2px 8px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>
-                              ✓
-                            </button>
-                            <button type="button" onClick={() => setInlineRename(null)}
-                              style={{ padding: '2px 6px', background: 'none', border: 'none', fontSize: 13, cursor: 'pointer', color: '#9ca3af' }}>
-                              ✕
-                            </button>
-                          </form>
-                        ) : cabinName ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                            <span style={{ fontSize: 11, color: '#9ca3af' }}>{cabinName}</span>
-                            <button onClick={() => { setInlineRename(skuId); setInlineVal(cabinName); }}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', fontSize: 11, padding: 0, lineHeight: 1 }}
-                              title="Đổi tên cabin">✎</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => { setInlineRename(skuId); setInlineVal(''); }}
-                            style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 4,
-                                     background: 'none', border: '1px dashed #fbbf24', borderRadius: 4,
-                                     padding: '1px 7px', cursor: 'pointer', color: '#92400e', fontSize: 11 }}>
-                            <span style={{ fontSize: 10 }}>✎</span>
-                            Đặt tên cabin · SKU {skuId}
-                          </button>
-                        )}
-                      </div>
+                        {/* Slot rows — compact, time only */}
+                        {productSlots.map(slot => {
+                          const meta      = slot.platform_data || {};
+                          const published = isPublished(slot);
+                          const sales     = meta.sales ?? 0;
+                          const inv       = meta.inv_quantity ?? '—';
+                          const msg       = msgs[slot.id];
 
-                      {/* Sales / Inventory */}
-                      <div style={{ textAlign: 'right', fontSize: 12, lineHeight: 1.5, whiteSpace: 'nowrap' }}>
-                        <span style={{ fontWeight: sales > 0 ? 700 : 400, color: sales > 0 ? '#111' : '#d1d5db' }}>
-                          {sales}
-                        </span>
-                        <span style={{ color: '#e5e7eb', margin: '0 2px' }}>/</span>
-                        <span style={{ color: '#9ca3af' }}>{inv}</span>
-                        {retail != null && (
-                          <div style={{ color: '#d1d5db', fontSize: 10, marginTop: 1 }}>
-                            {Math.round(retail / 1000)}k
-                          </div>
-                        )}
-                      </div>
+                          return (
+                            <div key={slot.id} style={{
+                              display: 'grid',
+                              gridTemplateColumns: '64px 1fr 84px',
+                              alignItems: 'center',
+                              padding: '7px 16px 7px 28px',
+                              borderBottom: '1px solid #f3f4f6',
+                              background: published ? '#fff' : '#fafafa',
+                              opacity: published ? 1 : 0.55,
+                            }}>
+                              {/* Time */}
+                              <div style={{ fontSize: 15, fontWeight: 800, color: '#111', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.3px' }}>
+                                {fmtTime(meta.start_time)}
+                              </div>
 
-                      {/* Toggle */}
-                      <div style={{ textAlign: 'right' }}>
-                        {msg === 'ok' ? (
-                          <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>✓</span>
-                        ) : msg === 'lỗi' ? (
-                          <span style={{ fontSize: 11, color: '#dc2626' }}>Lỗi</span>
-                        ) : msg ? (
-                          <span style={{ fontSize: 11, color: '#9ca3af' }}>{msg}</span>
-                        ) : published ? (
-                          <button onClick={() => toggle(slot, false)}
-                            style={{ padding: '4px 14px', fontSize: 12, fontWeight: 600, background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
-                            Tắt
-                          </button>
-                        ) : (
-                          <button onClick={() => toggle(slot, true)}
-                            style={{ padding: '4px 14px', fontSize: 12, fontWeight: 600, background: '#dcfce7', color: '#16a34a', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
-                            Bật
-                          </button>
-                        )}
+                              {/* Sales / Inventory */}
+                              <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                                <span style={{ fontWeight: sales > 0 ? 700 : 400, color: sales > 0 ? '#111' : '#d1d5db' }}>
+                                  {sales}
+                                </span>
+                                <span style={{ color: '#e5e7eb', margin: '0 3px' }}>/</span>
+                                {inv}
+                              </div>
+
+                              {/* Toggle */}
+                              <div style={{ textAlign: 'right' }}>
+                                {msg === 'ok' ? (
+                                  <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>✓</span>
+                                ) : msg === 'lỗi' ? (
+                                  <span style={{ fontSize: 11, color: '#dc2626', fontSize: 11 }}>Lỗi</span>
+                                ) : msg ? (
+                                  <span style={{ fontSize: 11, color: '#9ca3af' }}>{msg}</span>
+                                ) : published ? (
+                                  <button onClick={() => toggle(slot, false)}
+                                    style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
+                                    Tắt
+                                  </button>
+                                ) : (
+                                  <button onClick={() => toggle(slot, true)}
+                                    style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#dcfce7', color: '#16a34a', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
+                                    Bật
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             );
           })
