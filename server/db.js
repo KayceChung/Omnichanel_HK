@@ -46,6 +46,13 @@ async function init() {
       created_at  TIMESTAMPTZ  DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS klook_sku_names (
+      sku_id       VARCHAR(50)  PRIMARY KEY,
+      product_name VARCHAR(500) NOT NULL,
+      activity_id  VARCHAR(50),
+      updated_at   TIMESTAMPTZ  DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS jobs (
       id           SERIAL PRIMARY KEY,
       type         VARCHAR(100) NOT NULL,

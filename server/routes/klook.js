@@ -249,6 +249,39 @@ router.post('/update-schedule', async (req, res) => {
   }
 });
 
+// Bulk upsert SKU → product_name registry (populated from Excel / manual entry)
+router.post('/sku-names/bulk', async (req, res) => {
+  const { skus } = req.body;
+  if (!Array.isArray(skus) || skus.length === 0)
+    return res.status(400).json({ error: 'skus array required' });
+  try {
+    let upserted = 0;
+    for (const { sku_id, product_name, activity_id } of skus) {
+      if (!sku_id || !product_name) continue;
+      await pool.query(
+        `INSERT INTO klook_sku_names (sku_id, product_name, activity_id, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (sku_id) DO UPDATE SET product_name=$2, activity_id=$3, updated_at=NOW()`,
+        [String(sku_id), product_name, activity_id || null]
+      );
+      upserted++;
+    }
+    res.json({ upserted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Return all registered SKU names
+router.get('/sku-names', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM klook_sku_names ORDER BY sku_id');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Store imported Klook calendar data
 router.post('/import-calendar', async (req, res) => {
   const { sku_id, activity_id, calendar, product_name } = req.body;
@@ -260,8 +293,15 @@ router.post('/import-calendar', async (req, res) => {
     if (!platform.length) return res.status(404).json({ error: 'klook platform not found' });
     const platformId = platform[0].id;
 
-    // Use provided product name, or keep existing, or fall back to SKU number
-    const skuLabel = product_name || `SKU ${sku_id}`;
+    // Lookup product_name: provided → klook_sku_names registry → SKU fallback
+    let resolvedName = product_name;
+    if (!resolvedName) {
+      const { rows: reg } = await pool.query(
+        'SELECT product_name FROM klook_sku_names WHERE sku_id=$1', [String(sku_id)]
+      );
+      resolvedName = reg[0]?.product_name || null;
+    }
+    const skuLabel = resolvedName || `SKU ${sku_id}`;
 
     let upserted = 0;
     for (const slot of calendar) {
@@ -270,7 +310,7 @@ router.post('/import-calendar', async (req, res) => {
       const meta        = JSON.stringify({
         sku_id,
         activity_id,
-        product_name:   product_name || null,
+        product_name:   resolvedName || null,
         start_time:     slot.start_time,
         published:      slot.published,
         inv_quantity:   slot.inv_quantity,
