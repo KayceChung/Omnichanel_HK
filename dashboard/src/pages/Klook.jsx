@@ -25,7 +25,9 @@ export default function Klook() {
   const [customFrom, setCFrom]   = useState(today());
   const [customTo,   setCTo]     = useState(inDays(6));
   const [filter,    setFilter]   = useState('all'); // 'all' | 'active' | 'inactive'
-  const [msgs,      setMsgs]     = useState({});    // slot.id → message string
+  const [pending,   setPending]   = useState({});   // slot.id → true/false (new published state)
+  const [saving,    setSaving]    = useState(false);
+  const [saveResult, setSaveResult] = useState(null); // { ok, count, errors }
   const [inlineRename, setInlineRename] = useState(null);
   const [inlineVal,    setInlineVal]    = useState('');
   const [filterActivity, setFilterActivity] = useState(null); // null = all
@@ -93,32 +95,56 @@ export default function Klook() {
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
-  async function toggle(slot, publish) {
-    const meta = slot.platform_data || {};
-    setMsgs(m => ({ ...m, [slot.id]: publish ? '…bật' : '…tắt' }));
-    try {
-      const r = await fetch(`${API}/api/klook/update-schedule`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sku_id:       meta.sku_id,          // extension will Number() this
-          start_time:   meta.start_time,
-          published:    publish,
-          inv_quantity: meta.inv_quantity,     // keep exact value; -1 = inherit
-          price:        meta.price ?? undefined,
-          cut_off_time: meta.cut_off_time ?? 147600,
-        }),
-      });
-      const job = await r.json();
-      if (!r.ok) throw new Error(job.error);
-      setMsgs(m => ({ ...m, [slot.id]: 'ok' }));
-      // DB already updated optimistically — reload quickly to reflect new status
-      setTimeout(() => {
-        setMsgs(m => { const n = { ...m }; delete n[slot.id]; return n; });
-        loadSlots(dateFrom, dateTo);
-      }, 600);
-    } catch {
-      setMsgs(m => ({ ...m, [slot.id]: 'lỗi' }));
+  // Mark a slot for toggle — no API call yet, just local state
+  function markToggle(slot) {
+    const currentState = pending[slot.id] !== undefined
+      ? pending[slot.id]
+      : isPublished(slot);
+    setPending(p => ({ ...p, [slot.id]: !currentState }));
+    setSaveResult(null);
+  }
+
+  function cancelPending() {
+    setPending({});
+    setSaveResult(null);
+  }
+
+  // Send all pending changes to server in one batch, then reload once
+  async function saveAll() {
+    const entries = Object.entries(pending);
+    if (!entries.length) return;
+    setSaving(true);
+    setSaveResult(null);
+
+    // Build a lookup of slot objects by id
+    const slotById = {};
+    for (const s of slots) slotById[s.id] = s;
+
+    let ok = 0, errors = 0;
+    for (const [idStr, publish] of entries) {
+      const slot = slotById[Number(idStr)];
+      if (!slot) continue;
+      const meta = slot.platform_data || {};
+      try {
+        const r = await fetch(`${API}/api/klook/update-schedule`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sku_id:       meta.sku_id,
+            start_time:   meta.start_time,
+            published:    publish,
+            inv_quantity: meta.inv_quantity,
+            price:        meta.price ?? undefined,
+            cut_off_time: meta.cut_off_time ?? 147600,
+          }),
+        });
+        if (r.ok) ok++; else errors++;
+      } catch { errors++; }
     }
+
+    setPending({});
+    setSaving(false);
+    setSaveResult({ ok, errors });
+    loadSlots(dateFrom, dateTo); // single reload after all done
   }
 
   async function saveInlineName(sku_id) {
@@ -171,7 +197,9 @@ export default function Klook() {
 
   // ── Computed ─────────────────────────────────────────────────────────────────
 
-  const isPublished = (s) => s.platform_data?.published ?? s.platform_data?.publish_status === 'published';
+  const isPublished      = (s) => s.platform_data?.published ?? s.platform_data?.publish_status === 'published';
+  const effectivePublished = (s) => pending[s.id] !== undefined ? pending[s.id] : isPublished(s);
+  const pendingCount     = Object.keys(pending).length;
 
   // Unique activity names extracted from loaded slots (for the route filter)
   const activityOptions = [...new Set(
@@ -179,8 +207,8 @@ export default function Klook() {
   )].sort();
 
   const filtered = slots.filter(s => {
-    if (filter === 'active'   && !isPublished(s)) return false;
-    if (filter === 'inactive' &&  isPublished(s)) return false;
+    if (filter === 'active'   && !effectivePublished(s)) return false;
+    if (filter === 'inactive' &&  effectivePublished(s)) return false;
     if (filterActivity && s.activity_name !== filterActivity) return false;
     return true;
   });
@@ -192,7 +220,7 @@ export default function Klook() {
   }
   const dates = Object.keys(byDate).sort();
 
-  const totalOpen   = filtered.filter(isPublished).length;
+  const totalOpen   = filtered.filter(effectivePublished).length;
   const totalClosed = filtered.length - totalOpen;
 
   const jobsDone    = syncJobs.filter(j => j.status === 'done').length;
@@ -354,7 +382,7 @@ export default function Klook() {
 
                   return actKeys.map((actName, ai) => {
                     const actSlots  = byAct[actName];
-                    const actOpen   = actSlots.filter(isPublished).length;
+                    const actOpen   = actSlots.filter(effectivePublished).length;
 
                     // Tầng 2: nhóm theo product_name trong activity
                     const byProd = {};
@@ -388,7 +416,7 @@ export default function Klook() {
                         {prodKeys.map((productName, pi) => {
                           const prodSlots  = byProd[productName].slice().sort((a, b) =>
                             (a.platform_data?.start_time || '').localeCompare(b.platform_data?.start_time || ''));
-                          const prodOpen   = prodSlots.filter(isPublished).length;
+                          const prodOpen   = prodSlots.filter(effectivePublished).length;
                           const firstMeta  = prodSlots[0]?.platform_data || {};
                           const retail     = firstMeta.price?.retail_price ?? firstMeta.price?.retailPrice;
 
@@ -423,10 +451,10 @@ export default function Klook() {
                               {/* Tầng 3: time slot rows */}
                               {prodSlots.map(slot => {
                                 const meta      = slot.platform_data || {};
-                                const published = isPublished(slot);
+                                const pub       = effectivePublished(slot);
+                                const hasPending = pending[slot.id] !== undefined;
                                 const sales     = meta.sales ?? 0;
                                 const inv       = meta.inv_quantity ?? '—';
-                                const msg       = msgs[slot.id];
 
                                 return (
                                   <div key={slot.id} style={{
@@ -435,8 +463,10 @@ export default function Klook() {
                                     alignItems: 'center',
                                     padding: '6px 16px 6px 40px',
                                     borderBottom: '1px solid #f3f4f6',
-                                    background: published ? '#fff' : '#fafafa',
-                                    opacity: published ? 1 : 0.5,
+                                    background: hasPending ? '#fffbeb' : pub ? '#fff' : '#fafafa',
+                                    opacity: pub ? 1 : 0.5,
+                                    borderLeft: hasPending ? '3px solid #f59e0b' : '3px solid transparent',
+                                    transition: 'background .15s',
                                   }}>
                                     <div style={{ fontSize: 15, fontWeight: 800, color: '#111', fontVariantNumeric: 'tabular-nums' }}>
                                       {fmtTime(meta.start_time)}
@@ -447,25 +477,22 @@ export default function Klook() {
                                       </span>
                                       <span style={{ margin: '0 3px', color: '#e5e7eb' }}>/</span>
                                       {inv}
+                                      {hasPending && (
+                                        <span style={{ marginLeft: 6, fontSize: 10, color: '#f59e0b', fontWeight: 700 }}>
+                                          ● chưa lưu
+                                        </span>
+                                      )}
                                     </div>
                                     <div style={{ textAlign: 'right' }}>
-                                      {msg === 'ok' ? (
-                                        <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>✓</span>
-                                      ) : msg === 'lỗi' ? (
-                                        <span style={{ fontSize: 11, color: '#dc2626' }}>Lỗi</span>
-                                      ) : msg ? (
-                                        <span style={{ fontSize: 11, color: '#9ca3af' }}>{msg}</span>
-                                      ) : published ? (
-                                        <button onClick={() => toggle(slot, false)}
-                                          style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
-                                          Tắt
-                                        </button>
-                                      ) : (
-                                        <button onClick={() => toggle(slot, true)}
-                                          style={{ padding: '3px 12px', fontSize: 12, fontWeight: 600, background: '#dcfce7', color: '#16a34a', border: 'none', borderRadius: 5, cursor: 'pointer' }}>
-                                          Bật
-                                        </button>
-                                      )}
+                                      <button onClick={() => markToggle(slot)}
+                                        style={{
+                                          padding: '3px 12px', fontSize: 12, fontWeight: 600,
+                                          border: 'none', borderRadius: 5, cursor: 'pointer',
+                                          background: pub ? '#fee2e2' : '#dcfce7',
+                                          color:      pub ? '#dc2626' : '#16a34a',
+                                        }}>
+                                        {pub ? 'Tắt' : 'Bật'}
+                                      </button>
                                     </div>
                                   </div>
                                 );
@@ -482,6 +509,63 @@ export default function Klook() {
           })
         )}
       </div>
+
+      {/* ══ SAVE BAR — hiện khi có thay đổi chưa lưu ════════════════════════ */}
+      {(pendingCount > 0 || saveResult) && (
+        <div style={{
+          position: 'sticky', bottom: 12, zIndex: 50,
+          margin: '0 0 12px',
+          background: pendingCount > 0 ? '#1e293b' : saveResult?.errors ? '#fef2f2' : '#f0fdf4',
+          border: '1px solid',
+          borderColor: pendingCount > 0 ? '#334155' : saveResult?.errors ? '#fecaca' : '#bbf7d0',
+          borderRadius: 10,
+          padding: '12px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          boxShadow: '0 4px 20px rgba(0,0,0,.15)',
+        }}>
+          {pendingCount > 0 ? (
+            <>
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#f8fafc' }}>
+                {pendingCount} thay đổi chưa được lưu
+                <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: '#94a3b8' }}>
+                  — click Lưu để push lên Klook
+                </span>
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={cancelPending} disabled={saving}
+                  style={{ padding: '7px 16px', fontSize: 13, fontWeight: 600, borderRadius: 7,
+                           background: '#334155', color: '#94a3b8', border: '1px solid #475569', cursor: 'pointer' }}>
+                  Hủy
+                </button>
+                <button onClick={saveAll} disabled={saving}
+                  style={{ padding: '7px 20px', fontSize: 13, fontWeight: 700, borderRadius: 7,
+                           background: saving ? '#475569' : '#2563eb', color: '#fff',
+                           border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
+                           display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {saving ? (
+                    <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span> Đang lưu…</>
+                  ) : (
+                    <>💾 Lưu {pendingCount} thay đổi</>
+                  )}
+                </button>
+              </div>
+            </>
+          ) : saveResult && (
+            <>
+              <span style={{ fontSize: 14, fontWeight: 600, color: saveResult.errors ? '#dc2626' : '#16a34a' }}>
+                {saveResult.errors
+                  ? `⚠ ${saveResult.ok} thành công, ${saveResult.errors} lỗi`
+                  : `✓ Đã lưu ${saveResult.ok} thay đổi lên Klook`}
+              </span>
+              <button onClick={() => setSaveResult(null)}
+                style={{ padding: '4px 12px', fontSize: 12, background: 'none',
+                         border: '1px solid #d1d5db', borderRadius: 5, cursor: 'pointer', color: '#6b7280' }}>
+                ✕
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ══ SETTINGS (collapsible) ════════════════════════════════════════════ */}
       <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', background: '#fff' }}>
